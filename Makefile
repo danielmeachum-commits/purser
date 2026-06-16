@@ -1,7 +1,18 @@
-.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests
+.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests dev
 
 # Default target executed when no arguments are given to make.
 all: help
+
+# Inside the direnv-activated shell (see shell.nix + .envrc), LD_LIBRARY_PATH
+# already includes libstdc++ via nix-ld, so plain `langgraph dev` works.
+# Outside it (or on a system without nix-ld), this target inlines the same
+# fix so `make dev` is portable across both setups.
+dev:
+	@if [ -n "$$NIX_LD_LIBRARY_PATH" ]; then \
+		LD_LIBRARY_PATH="$$NIX_LD_LIBRARY_PATH$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}" uv run langgraph dev --no-browser; \
+	else \
+		uv run langgraph dev --no-browser; \
+	fi
 
 # Define a variable for the test file path.
 TEST_FILE ?= tests/unit_tests/

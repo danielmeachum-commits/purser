@@ -154,21 +154,34 @@ Always use `Decimal` (not `float`) for `amount` — `Numeric` round-trips to
 ## Running the agent
 
 ```bash
-uv sync                # install deps into .venv
-langgraph dev          # serve the graph locally for Studio + HTTP
+uv sync           # install deps into .venv
+langgraph dev     # serve the graph at http://localhost:2024 (Studio + HTTP)
 ```
 
 Studio config in `langgraph.json` exposes the `agent` graph defined at
-`src/agent/graph.py`. `langgraph dev` listens on `http://localhost:2024`.
+`src/agent/graph.py`.
 
-On NixOS (or any env where `libstdc++.so.6` isn't on the default loader
-path), `grpc` fails to import. Workaround — preload the lib from the nix
-store:
+### NixOS: dev shell via `shell.nix` + direnv
+
+`langgraph dev` imports `grpc`, whose cython extension links against
+`libstdc++.so.6`. On NixOS that lib lives in `/nix/store` and isn't on
+the default loader path, so the import fails with `ImportError:
+libstdc++.so.6: cannot open shared object file`.
+
+The repo's `shell.nix` exports `LD_LIBRARY_PATH` from nix-ld's lib set
+(with `stdenv.cc.cc.lib` as a fallback). With direnv installed, run:
 
 ```bash
-LD_LIBRARY_PATH=$(dirname $(find /nix/store -maxdepth 4 -name 'libstdc++.so.6' | head -1)) \
-  uv run langgraph dev --no-browser
+direnv allow      # one-time, picks up .envrc + shell.nix
 ```
+
+After that, `cd`ing into the repo activates the env automatically — plain
+`langgraph dev` (and any other command needing libstdc++) just works.
+
+If you'd rather not use direnv:
+
+- `nix-shell` drops you into the same env interactively
+- `make dev` inlines the `NIX_LD_LIBRARY_PATH` fix and works either way
 
 ## Agent workflow
 
