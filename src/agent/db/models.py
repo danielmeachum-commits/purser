@@ -155,6 +155,7 @@ class Transaction(Base):
         ForeignKey("accounts.id"), nullable=True, index=True
     )
     description: Mapped[str] = mapped_column(String(255))
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     type: Mapped[TransactionType] = relationship()
@@ -166,5 +167,6 @@ class Transaction(Base):
         return (
             f"Transaction(id={self.id}, date={self.date}, amount={self.amount}, "
             f"type_id={self.type_id}, description={self.description!r}, "
-            f"category_id={self.category_id}, account_id={self.account_id})"
+            f"category_id={self.category_id}, account_id={self.account_id}, "
+            f"is_test={self.is_test})"
         )

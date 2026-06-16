@@ -41,6 +41,7 @@ def record_transaction(
     date: str | None = None,
     category: str | None = None,
     account: str | None = None,
+    is_test: bool = False,
 ) -> str:
     """Record a single financial transaction.
 
@@ -51,6 +52,7 @@ def record_transaction(
         date: ISO date (YYYY-MM-DD). Defaults to today.
         category: Existing category name. Errors if the category doesn't exist.
         account: Existing account nickname. Errors if the account doesn't exist.
+        is_test: Mark as a test/throwaway row. Hidden from list/summary by default.
     """
     with session_scope() as s:
         try:
@@ -89,11 +91,13 @@ def record_transaction(
             category=cat,
             account=acct,
             description=description,
+            is_test=is_test,
         )
         s.add(tx)
         s.flush()
+        marker = " [TEST]" if is_test else ""
         return (
-            f"recorded transaction #{tx.id}: {tx.date} {type} "
+            f"recorded transaction #{tx.id}{marker}: {tx.date} {type} "
             f"${tx.amount} ({description!r})"
         )
 
@@ -104,6 +108,7 @@ def list_transactions(
     since_date: str | None = None,
     category: str | None = None,
     account: str | None = None,
+    include_test: bool = False,
 ) -> list[dict[str, Any]]:
     """List recent transactions, newest first.
 
@@ -112,9 +117,12 @@ def list_transactions(
         since_date: ISO date; include only transactions on or after this date.
         category: Filter by category name.
         account: Filter by account nickname.
+        include_test: If False (default), hide rows flagged is_test=True.
     """
     with session_scope() as s:
         q = s.query(Transaction)
+        if not include_test:
+            q = q.filter(Transaction.is_test.is_(False))
         if since_date is not None:
             q = q.filter(Transaction.date >= _parse_date(since_date))
         if category is not None:
@@ -135,6 +143,7 @@ def list_transactions(
                 "category": tx.category.name if tx.category else None,
                 "account": tx.account.nickname if tx.account else None,
                 "description": tx.description,
+                "is_test": tx.is_test,
             }
             for tx in rows
         ]
@@ -145,6 +154,7 @@ def summarize_transactions(
     start_date: str,
     end_date: str,
     group_by: str | None = None,
+    include_test: bool = False,
 ) -> dict[str, Any]:
     """Summarize transactions over a date range (inclusive). Totals are signed.
 
@@ -152,6 +162,7 @@ def summarize_transactions(
         start_date: ISO date.
         end_date: ISO date.
         group_by: One of 'category', 'account', 'type', or None for overall total.
+        include_test: If False (default), exclude rows flagged is_test=True.
     """
     valid = (None, "category", "account", "type")
     if group_by not in valid:
@@ -167,6 +178,8 @@ def summarize_transactions(
             .join(Transaction.type)
             .filter(Transaction.date >= start, Transaction.date <= end)
         )
+        if not include_test:
+            base = base.filter(Transaction.is_test.is_(False))
 
         if group_by is None:
             total = base.with_entities(sa_func.sum(signed)).scalar() or Decimal("0")

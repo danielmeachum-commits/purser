@@ -78,10 +78,14 @@ Seeded by `init_db()`.
 | `category_id` | INTEGER FK     | → `categories.id`, nullable, indexed           |
 | `account_id`  | INTEGER FK     | → `accounts.id`, nullable, indexed             |
 | `description` | VARCHAR(255)   | free-text payee / memo                         |
+| `is_test`     | BOOLEAN        | default FALSE; flag throwaway/dev rows so they're excluded from list/summary by default |
 | `created_at`  | DATETIME       | server default `CURRENT_TIMESTAMP`             |
 
 Sign convention: `amount` is positive. For a signed total, join to
 `transaction_types` and multiply by `sign`.
+
+`list_transactions` and `summarize_transactions` both take an
+`include_test` flag (default `False`) — set it to `True` to see test rows.
 
 ### Initialize / reset the DB
 
