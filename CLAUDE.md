@@ -84,8 +84,70 @@ Seeded by `init_db()`.
 Sign convention: `amount` is positive. For a signed total, join to
 `transaction_types` and multiply by `sign`.
 
-`list_transactions` and `summarize_transactions` both take an
-`include_test` flag (default `False`) — set it to `True` to see test rows.
+`list_transactions` and `summarize_transactions` both take a `test_mode`
+argument: `"exclude"` (default) hides `is_test=True` rows, `"only"` returns
+just those rows, `"include"` returns both — handy for sanity-checking dev
+rows without polluting normal queries.
+
+### Date ranges
+
+Both query tools accept a `date_range` string that resolves natural-language
+windows via `agent.dates.resolve_range`. Supported phrases:
+
+- `today`, `yesterday`, `tomorrow`
+- `this week`, `last week`, `this month`, `last month`, `this year`, `last year`
+- `ytd` / `mtd` / `wtd` (and the spelled-out forms)
+- A bare month: `january`, `jan`, `in june` — picks the most recent past (or
+  current) occurrence
+- A month + year: `january 2025`, `jun 2024`
+- `last N days|weeks|months|years` (alias: `past N ...`) — N units ending today, inclusive
+- A bare year: `2025` or `in 2025`
+- A single ISO date: `2026-06-16`
+- An ISO range: `2026-06-01 to 2026-06-30` (also `..` or ` - ` as separators)
+
+`summarize_transactions` accepts either `date_range` OR `start_date+end_date`
+(not both). `list_transactions` accepts either `date_range` OR `since_date`.
+
+### Time-bucketed summaries
+
+`summarize_transactions` takes an optional `period` arg — `day`, `week`,
+`month`, or `year` (also `1d`/`1w`/`1m`/`1y`) — to bucket results over time.
+Combine with `group_by` for sub-totals within each bucket.
+
+### Grouping dimensions
+
+`group_by` defaults to `"category"`. It accepts:
+
+- A single dim name: `"category"`, `"account"`, or `"type"`
+- A list of dims: `["category", "account"]` — keys become objects like
+  `{"category": "food", "account": "chase checking"}`
+- A comma-separated string: `"category,account"` (same as the list)
+- `None` or the string `"none"` to get a single net total (no grouping)
+
+Pass `include_transactions=True` to append a `transactions: [...]` array
+of the matching raw rows alongside the totals — saves a second call when
+you want both views.
+
+### Metrics on every result level
+
+Every node in the response (top-level, each bucket, each group) reports:
+
+- `net` — signed total (positive=income, negative=expense)
+- `inflow` — sum of positive contributions only
+- `outflow` — sum of negative contributions only (negative number)
+- `count` — number of matching transactions
+
+Pass `extended_metrics=True` to additionally include `avg`, `min`, `max`
+(all over `Transaction.amount`, the unsigned magnitude), and `largest`
+(the row with the biggest amount: `{id, amount, description}`).
+
+Output shapes:
+
+- `period=None, group_by=None` → top-level metrics only
+- `period=None, group_by="category"` → top-level + `{"groups": [{"key": "food", ...metrics}, ...]}`
+- `period=None, group_by=["category","account"]` → groups whose `key` is `{"category", "account"}`
+- `period="month", group_by=None` → top-level + `{"buckets": [{"period": "2026-06", ...metrics}, ...]}`
+- `period="month", group_by="category"` → buckets, each with `groups: [...]` inside
 
 ### Initialize / reset the DB
 

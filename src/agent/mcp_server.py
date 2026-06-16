@@ -18,9 +18,9 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from sqlalchemy import func as sa_func
 from sqlalchemy.exc import NoResultFound
 
+from agent.dates import resolve_range
 from agent.db import (
     Account,
     AccountType,
@@ -35,6 +35,66 @@ mcp = FastMCP("budget-graph")
 
 def _parse_date(s: str | None) -> date_type:
     return date_type.today() if s is None else date_type.fromisoformat(s)
+
+
+_PERIOD_FORMATS = {
+    "day": "%Y-%m-%d", "1d": "%Y-%m-%d",
+    "week": "%Y-W%W", "1w": "%Y-W%W",
+    "month": "%Y-%m", "1m": "%Y-%m",
+    "year": "%Y", "1y": "%Y",
+}
+
+_TEST_MODES = ("exclude", "only", "include")
+
+
+def _apply_test_mode(query: Any, test_mode: str) -> Any:
+    if test_mode == "exclude":
+        return query.filter(Transaction.is_test.is_(False))
+    if test_mode == "only":
+        return query.filter(Transaction.is_test.is_(True))
+    return query
+
+
+def _normalize_group_by(group_by: str | list[str] | None) -> list[str] | dict[str, str]:
+    """Coerce group_by to a list of dim names. Returns an error dict on bad input."""
+    valid = {"category", "account", "type"}
+    if group_by is None:
+        return []
+    if isinstance(group_by, str):
+        text = group_by.strip().lower()
+        if text in ("", "none"):
+            return []
+        items = [d.strip() for d in text.split(",") if d.strip()]
+    elif isinstance(group_by, list):
+        items = [d.strip().lower() for d in group_by if d and d.strip()]
+    else:
+        return {"error": f"group_by must be a string, list, or None; got {type(group_by).__name__}"}
+    bad = [d for d in items if d not in valid]
+    if bad:
+        return {"error": f"group_by values must be in {sorted(valid)}; got {bad!r}"}
+    seen: list[str] = []
+    for d in items:
+        if d not in seen:
+            seen.append(d)
+    return seen
+
+
+def _resolve_window(
+    date_range: str | None,
+    start_date: str | None,
+    end_date: str | None,
+) -> tuple[date_type, date_type] | dict[str, str]:
+    """Return (start, end) or a {'error': ...} dict for the caller to surface."""
+    if date_range is not None:
+        if start_date is not None or end_date is not None:
+            return {"error": "pass either date_range or start_date+end_date, not both"}
+        try:
+            return resolve_range(date_range)
+        except ValueError as e:
+            return {"error": str(e)}
+    if start_date is None or end_date is None:
+        return {"error": "provide date_range, or both start_date and end_date"}
+    return _parse_date(start_date), _parse_date(end_date)
 
 
 def _parse_amount(amount: float | int | str) -> Decimal:
@@ -105,25 +165,44 @@ def list_accounts(include_inactive: bool = False) -> list[dict[str, Any]]:
 @mcp.tool()
 def list_transactions(
     limit: int = 10,
+    date_range: str | None = None,
     since_date: str | None = None,
     category: str | None = None,
     account: str | None = None,
-    include_test: bool = False,
-) -> list[dict[str, Any]]:
+    test_mode: str = "exclude",
+) -> list[dict[str, Any]] | dict[str, str]:
     """List recent transactions, newest first.
 
     Args:
         limit: Max rows to return.
+        date_range: Natural-language window such as 'last month', 'this week',
+            'june 2025', 'ytd', or an ISO range '2026-06-01 to 2026-06-30'.
+            Mutually exclusive with since_date.
         since_date: ISO date; include only transactions on or after this date.
         category: Filter by category name.
         account: Filter by account nickname.
-        include_test: If False (default), hide rows flagged is_test=True.
+        test_mode: 'exclude' (default) hides rows flagged is_test=True;
+            'only' returns only those rows; 'include' returns both.
     """
+    if test_mode not in _TEST_MODES:
+        return {"error": f"test_mode must be one of {_TEST_MODES}, got {test_mode!r}"}
+    if date_range is not None and since_date is not None:
+        return {"error": "pass either date_range or since_date, not both"}
+    range_window: tuple[date_type, date_type] | None = None
+    if date_range is not None:
+        try:
+            range_window = resolve_range(date_range)
+        except ValueError as e:
+            return {"error": str(e)}
+
     with session_scope() as s:
-        q = s.query(Transaction)
-        if not include_test:
-            q = q.filter(Transaction.is_test.is_(False))
-        if since_date is not None:
+        q = _apply_test_mode(s.query(Transaction), test_mode)
+        if range_window is not None:
+            q = q.filter(
+                Transaction.date >= range_window[0],
+                Transaction.date <= range_window[1],
+            )
+        elif since_date is not None:
             q = q.filter(Transaction.date >= _parse_date(since_date))
         if category is not None:
             q = q.join(Transaction.category).filter(Category.name == category)
@@ -149,69 +228,221 @@ def list_transactions(
         ]
 
 
+def _new_acc(extended: bool) -> dict[str, Any]:
+    acc: dict[str, Any] = {
+        "net": Decimal("0"),
+        "inflow": Decimal("0"),
+        "outflow": Decimal("0"),
+        "count": 0,
+    }
+    if extended:
+        acc["_amounts"] = []
+        acc["_largest"] = None
+    return acc
+
+
+def _add_to_acc(acc: dict[str, Any], row: Any, extended: bool) -> None:
+    amount = row.amount
+    signed = amount * row.sign
+    acc["net"] += signed
+    if signed > 0:
+        acc["inflow"] += signed
+    elif signed < 0:
+        acc["outflow"] += signed
+    acc["count"] += 1
+    if extended:
+        acc["_amounts"].append(amount)
+        if acc["_largest"] is None or amount > acc["_largest"]["amount"]:
+            acc["_largest"] = {
+                "amount": amount,
+                "id": row.id,
+                "description": row.description,
+            }
+
+
+def _finalize_acc(acc: dict[str, Any], extended: bool) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "net": str(acc["net"]),
+        "inflow": str(acc["inflow"]),
+        "outflow": str(acc["outflow"]),
+        "count": acc["count"],
+    }
+    if extended and acc["count"]:
+        amounts = acc["_amounts"]
+        avg = (sum(amounts) / Decimal(len(amounts))).quantize(Decimal("0.01"))
+        out["avg"] = str(avg)
+        out["min"] = str(min(amounts))
+        out["max"] = str(max(amounts))
+        largest = acc["_largest"]
+        out["largest"] = {
+            "id": largest["id"],
+            "amount": str(largest["amount"]),
+            "description": largest["description"],
+        }
+    return out
+
+
+def _row_dim(row: Any, dim: str) -> str:
+    val = {
+        "category": row.category_name,
+        "account": row.account_nickname,
+        "type": row.type_name,
+    }[dim]
+    return val or "(none)"
+
+
 @mcp.tool()
 def summarize_transactions(
-    start_date: str,
-    end_date: str,
-    group_by: str | None = None,
-    include_test: bool = False,
+    date_range: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    period: str | None = None,
+    group_by: str | list[str] | None = "category",
+    include_transactions: bool = False,
+    extended_metrics: bool = False,
+    test_mode: str = "exclude",
 ) -> dict[str, Any]:
     """Summarize transactions over a date range (inclusive). Totals are signed.
 
-    Args:
-        start_date: ISO date.
-        end_date: ISO date.
-        group_by: One of 'category', 'account', 'type', or None for overall total.
-        include_test: If False (default), exclude rows flagged is_test=True.
-    """
-    valid = (None, "category", "account", "type")
-    if group_by not in valid:
-        return {"error": f"group_by must be one of {valid}, got {group_by!r}"}
+    Each result level reports `net`, `inflow`, `outflow`, and `count`.
+    Set `extended_metrics=True` to also include `avg`, `min`, `max`, and
+    `largest: {id, amount, description}` per group/bucket.
 
-    start = _parse_date(start_date)
-    end = _parse_date(end_date)
-    signed = Transaction.amount * TransactionType.sign
+    Args:
+        date_range: Natural-language window such as 'last month', 'this week',
+            'june 2025', 'last 30 days', 'ytd', 'in 2024', or an ISO range
+            like '2026-06-01 to 2026-06-30'. Mutually exclusive with
+            start_date+end_date.
+        start_date: ISO date. Use with end_date if date_range is omitted.
+        end_date: ISO date. Use with start_date if date_range is omitted.
+        period: Optional time bucket — 'day', 'week', 'month', or 'year'
+            (also '1d'/'1w'/'1m'/'1y'). When set, results are grouped into
+            buckets; combine with group_by to sub-group within each bucket.
+        group_by: Dimension(s) to group by. Pass a single name ('category',
+            'account', 'type'), a list like ['category','account'], 'none'
+            (or None) for a single total, or a comma-separated string.
+            Defaults to 'category'.
+        include_transactions: If True, append the raw matching rows under
+            a 'transactions' key — useful when you want totals AND the
+            rows behind them in one call.
+        extended_metrics: If True, include avg/min/max/largest in addition
+            to the base net/inflow/outflow/count.
+        test_mode: 'exclude' (default) hides rows flagged is_test=True;
+            'only' returns only those rows; 'include' returns both.
+    """
+    dims = _normalize_group_by(group_by)
+    if isinstance(dims, dict):
+        return dims
+    if period is not None and period not in _PERIOD_FORMATS:
+        return {
+            "error": f"period must be one of {sorted(_PERIOD_FORMATS)}, got {period!r}"
+        }
+    if test_mode not in _TEST_MODES:
+        return {"error": f"test_mode must be one of {_TEST_MODES}, got {test_mode!r}"}
+
+    window = _resolve_window(date_range, start_date, end_date)
+    if isinstance(window, dict):
+        return window
+    start, end = window
+
+    period_fmt = _PERIOD_FORMATS[period] if period else None
 
     with session_scope() as s:
-        base = (
-            s.query(Transaction)
+        rows = (
+            s.query(
+                Transaction.id,
+                Transaction.date,
+                Transaction.amount,
+                Transaction.description,
+                Transaction.is_test,
+                TransactionType.sign.label("sign"),
+                TransactionType.name.label("type_name"),
+                Category.name.label("category_name"),
+                Account.nickname.label("account_nickname"),
+            )
             .join(Transaction.type)
+            .outerjoin(Transaction.category)
+            .outerjoin(Transaction.account)
             .filter(Transaction.date >= start, Transaction.date <= end)
         )
-        if not include_test:
-            base = base.filter(Transaction.is_test.is_(False))
+        rows = _apply_test_mode(rows, test_mode).all()
 
-        if group_by is None:
-            total = base.with_entities(sa_func.sum(signed)).scalar() or Decimal("0")
-            return {"start": start.isoformat(), "end": end.isoformat(), "net": str(total)}
+        overall = _new_acc(extended_metrics)
+        bucket_accs: dict[str, dict[str, Any]] = {}
+        bucket_group_accs: dict[str, dict[tuple, dict[str, Any]]] = {}
+        group_accs: dict[tuple, dict[str, Any]] = {}
 
-        if group_by == "type":
-            rows = (
-                base.with_entities(TransactionType.name, sa_func.sum(signed))
-                .group_by(TransactionType.name)
-                .all()
-            )
-        elif group_by == "category":
-            rows = (
-                base.outerjoin(Transaction.category)
-                .with_entities(Category.name, sa_func.sum(signed))
-                .group_by(Category.name)
-                .all()
-            )
-        else:
-            rows = (
-                base.outerjoin(Transaction.account)
-                .with_entities(Account.nickname, sa_func.sum(signed))
-                .group_by(Account.nickname)
-                .all()
-            )
+        for row in rows:
+            _add_to_acc(overall, row, extended_metrics)
+            pk = row.date.strftime(period_fmt) if period_fmt else None
+            dk = tuple(_row_dim(row, d) for d in dims)
+            if period and dims:
+                b = bucket_accs.setdefault(pk, _new_acc(extended_metrics))
+                _add_to_acc(b, row, extended_metrics)
+                gmap = bucket_group_accs.setdefault(pk, {})
+                g = gmap.setdefault(dk, _new_acc(extended_metrics))
+                _add_to_acc(g, row, extended_metrics)
+            elif period:
+                b = bucket_accs.setdefault(pk, _new_acc(extended_metrics))
+                _add_to_acc(b, row, extended_metrics)
+            elif dims:
+                g = group_accs.setdefault(dk, _new_acc(extended_metrics))
+                _add_to_acc(g, row, extended_metrics)
 
-        return {
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "group_by": group_by,
-            "groups": [{"key": k or "(none)", "net": str(v)} for k, v in rows],
-        }
+        meta: dict[str, Any] = {"start": start.isoformat(), "end": end.isoformat()}
+        if period is not None:
+            meta["period"] = period
+        if dims:
+            meta["group_by"] = dims[0] if len(dims) == 1 else dims
+        if test_mode != "exclude":
+            meta["test_mode"] = test_mode
+
+        def key_to_value(dk: tuple) -> Any:
+            if len(dims) == 1:
+                return dk[0]
+            return {d: v for d, v in zip(dims, dk)}
+
+        result: dict[str, Any] = {**meta, **_finalize_acc(overall, extended_metrics)}
+
+        if period and dims:
+            buckets = []
+            for pk in sorted(bucket_accs):
+                bucket_obj: dict[str, Any] = {
+                    "period": pk,
+                    **_finalize_acc(bucket_accs[pk], extended_metrics),
+                    "groups": [
+                        {"key": key_to_value(dk), **_finalize_acc(g, extended_metrics)}
+                        for dk, g in sorted(bucket_group_accs[pk].items())
+                    ],
+                }
+                buckets.append(bucket_obj)
+            result["buckets"] = buckets
+        elif period:
+            result["buckets"] = [
+                {"period": pk, **_finalize_acc(bucket_accs[pk], extended_metrics)}
+                for pk in sorted(bucket_accs)
+            ]
+        elif dims:
+            result["groups"] = [
+                {"key": key_to_value(dk), **_finalize_acc(g, extended_metrics)}
+                for dk, g in sorted(group_accs.items())
+            ]
+
+        if include_transactions:
+            result["transactions"] = [
+                {
+                    "id": row.id,
+                    "date": row.date.isoformat(),
+                    "amount": str(row.amount),
+                    "type": row.type_name,
+                    "category": row.category_name,
+                    "account": row.account_nickname,
+                    "description": row.description,
+                    "is_test": row.is_test,
+                }
+                for row in sorted(rows, key=lambda r: (r.date, r.id), reverse=True)
+            ]
+        return result
 
 
 @mcp.tool()
