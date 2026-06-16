@@ -151,11 +151,66 @@ Always use `Decimal` (not `float`) for `amount` — `Numeric` round-trips to
 
 ```bash
 uv sync                # install deps into .venv
-langgraph dev          # serve the graph locally for LangGraph Studio
+langgraph dev          # serve the graph locally for Studio + HTTP
 ```
 
 Studio config in `langgraph.json` exposes the `agent` graph defined at
-`src/agent/graph.py`.
+`src/agent/graph.py`. `langgraph dev` listens on `http://localhost:2024`.
+
+On NixOS (or any env where `libstdc++.so.6` isn't on the default loader
+path), `grpc` fails to import. Workaround — preload the lib from the nix
+store:
+
+```bash
+LD_LIBRARY_PATH=$(dirname $(find /nix/store -maxdepth 4 -name 'libstdc++.so.6' | head -1)) \
+  uv run langgraph dev --no-browser
+```
+
+## Agent workflow
+
+`src/agent/graph.py` builds a ReAct agent (`langgraph.prebuilt.create_react_agent`)
+over the tools in `src/agent/tools.py`:
+
+| Tool                     | Purpose                                           |
+|--------------------------|---------------------------------------------------|
+| `record_transaction`     | Insert a new transaction; FKs looked up by name   |
+| `list_transactions`      | List recent rows; filter by date/category/account |
+| `summarize_transactions` | Signed totals over a date range, optionally grouped |
+| `add_account`            | Create a new account row                          |
+| `add_category`           | Create a new category (optionally nested)         |
+
+`record_transaction` does NOT silently create unknown accounts or
+categories — it errors and asks the LLM to call `add_*` first.
+
+### LLM backend
+
+The agent uses an OpenAI-compatible local LLM. Defaults:
+
+- `LOCAL_LLM_BASE_URL` = `http://localhost:9292/v1` (llama-swap)
+- `LOCAL_LLM_MODEL` = `gpt-oss-20b`
+- `LOCAL_LLM_API_KEY` = `not-needed`
+
+Override any of these via `.env` to point at a different endpoint or model.
+The model must support OpenAI-style tool calls.
+
+### Invoking from Claude Code
+
+With `langgraph dev` running, use curl from the Claude Code shell:
+
+```bash
+# Stateless single-turn invocation
+curl -sS http://localhost:2024/runs/wait \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assistant_id": "agent",
+    "input": {"messages": [{"role": "user", "content": "Show my last 5 transactions"}]}
+  }' | jq '.messages[-1].content'
+```
+
+For multi-turn conversations, create a thread first (`POST /threads`)
+and reuse its `thread_id` on subsequent `/threads/{thread_id}/runs/wait`
+calls. The LangGraph dev API docs at `http://localhost:2024/docs` cover
+the full surface.
 
 ## Conventions
 

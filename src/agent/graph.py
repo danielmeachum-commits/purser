@@ -1,54 +1,56 @@
-"""LangGraph single-node graph template.
+"""LangGraph workflow: a ReAct-style budget agent over a local LLM.
 
-Returns a predefined response. Replace logic and configuration as needed.
+Defaults to llama-swap on http://localhost:9292/v1 serving `gpt-oss-20b`.
+Override via `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL`, `LOCAL_LLM_API_KEY`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict
+import os
 
-from langgraph.graph import StateGraph
-from langgraph.runtime import Runtime
-from typing_extensions import TypedDict
+from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
 
+from agent.tools import TOOLS
 
-class Context(TypedDict):
-    """Context parameters for the agent.
+_DEFAULT_BASE_URL = "http://localhost:9292/v1"
+_DEFAULT_MODEL = "gpt-oss-20b"
 
-    Set these when creating assistants OR when invoking the graph.
-    See: https://langchain-ai.github.io/langgraph/cloud/how-tos/configuration_cloud/
-    """
+SYSTEM_PROMPT = """You are a personal finance assistant.
 
-    my_configurable_param: str
+You have tools to record, list, and summarize the user's transactions,
+and to add new bank accounts and categories. All `amount` values are
+positive decimals; direction comes from the transaction type ('income',
+'expense', 'transfer').
 
-
-@dataclass
-class State:
-    """Input state for the agent.
-
-    Defines the initial structure of incoming data.
-    See: https://langchain-ai.github.io/langgraph/concepts/low_level/#state
-    """
-
-    changeme: str = "example"
-
-
-async def call_model(state: State, runtime: Runtime[Context]) -> Dict[str, Any]:
-    """Process input and returns output.
-
-    Can use runtime context to alter behavior.
-    """
-    return {
-        "changeme": "output from call_model. "
-        f"Configured with {(runtime.context or {}).get('my_configurable_param')}"
-    }
+Rules:
+- ALWAYS attempt the relevant tool first. Do NOT assume an account,
+  category, or transaction is missing without calling the tool. The
+  tools will tell you if a lookup failed.
+- For recording: extract amount, type, description, date (default
+  today), category, and account from the user's message, then call
+  record_transaction. If the tool returns "no account with nickname X"
+  or "no ... category named X", THEN ask the user whether to add it
+  with add_account or add_category, and after they confirm, add it and
+  retry record_transaction.
+- For summaries, totals are signed (expenses negative, income positive).
+- Confirm successful writes with a short reply including the new row's
+  ID and key fields. Be concise.
+"""
 
 
-# Define the graph
-graph = (
-    StateGraph(State, context_schema=Context)
-    .add_node(call_model)
-    .add_edge("__start__", "call_model")
-    .compile(name="New Graph")
+def _make_model() -> ChatOpenAI:
+    return ChatOpenAI(
+        base_url=os.environ.get("LOCAL_LLM_BASE_URL", _DEFAULT_BASE_URL),
+        api_key=os.environ.get("LOCAL_LLM_API_KEY", "not-needed"),
+        model=os.environ.get("LOCAL_LLM_MODEL", _DEFAULT_MODEL),
+        temperature=0,
+    )
+
+
+graph = create_react_agent(
+    _make_model(),
+    tools=TOOLS,
+    prompt=SYSTEM_PROMPT,
+    name="budget-agent",
 )
