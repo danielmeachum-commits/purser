@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "budget-graph": {
+      "command": "uv",
+      "args": ["run", "--directory", ".", "budget-mcp"]
+    }
+  }
+}

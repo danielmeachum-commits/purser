@@ -190,14 +190,41 @@ over the tools in `src/agent/tools.py`:
 
 | Tool                     | Purpose                                           |
 |--------------------------|---------------------------------------------------|
-| `record_transaction`     | Insert a new transaction; FKs looked up by name   |
+| `record_transaction`     | Insert a new transaction; interrupts for user confirmation before writing |
 | `list_transactions`      | List recent rows; filter by date/category/account |
 | `summarize_transactions` | Signed totals over a date range, optionally grouped |
+| `list_categories`        | Read existing categories (used to auto-suggest a category before recording) |
 | `add_account`            | Create a new account row                          |
 | `add_category`           | Create a new category (optionally nested)         |
 
 `record_transaction` does NOT silently create unknown accounts or
 categories — it errors and asks the LLM to call `add_*` first.
+
+### Category auto-suggest + write confirmation
+
+The system prompt drives this flow when the user wants to log a transaction:
+
+1. LLM calls `list_categories` (filtered to the transaction's type) and
+   picks the best match by name/meaning.
+2. If nothing fits, the LLM proposes a new category in chat, mentioning
+   that it can be either a top-level category OR a subcategory of an
+   existing related parent (e.g. `groceries` under `food`). On user
+   agreement it calls `add_category`.
+3. The LLM then calls `record_transaction`. **The tool itself calls
+   `langgraph.types.interrupt()`** with a preview payload before any
+   write — the graph pauses and the caller sees the interrupt. The
+   user resumes the run with `yes`/`no`; on anything other than
+   affirmative the tool returns `transaction not recorded — user
+   declined` and no row is inserted.
+
+Affirmative parsing in `_is_affirmative` (`src/agent/tools.py`) accepts
+`yes`, `y`, `confirm`, `ok`, `okay`, `sure`, `go`, `do it`, `true`, or a
+dict containing one of those under `confirm`/`approved`/`answer`/`response`.
+Everything else counts as a decline.
+
+Because `interrupt()` requires a checkpointer and the ability to resume,
+calls that may hit `record_transaction` MUST go through a thread (see
+the curl example below). Stateless `/runs/wait` calls cannot be resumed.
 
 ### LLM backend
 
@@ -212,10 +239,11 @@ The model must support OpenAI-style tool calls.
 
 ### Invoking from Claude Code
 
-With `langgraph dev` running, use curl from the Claude Code shell:
+With `langgraph dev` running, use curl from the Claude Code shell.
+Read-only operations (`list_transactions`, `summarize_transactions`,
+`list_categories`) work as a single stateless call:
 
 ```bash
-# Stateless single-turn invocation
 curl -sS http://localhost:2024/runs/wait \
   -H "Content-Type: application/json" \
   -d '{
@@ -224,12 +252,78 @@ curl -sS http://localhost:2024/runs/wait \
   }' | jq '.messages[-1].content'
 ```
 
-For multi-turn conversations, create a thread first (`POST /threads`)
-and reuse its `thread_id` on subsequent `/threads/{thread_id}/runs/wait`
-calls. The LangGraph dev API docs at `http://localhost:2024/docs` cover
-the full surface.
+Anything that hits `record_transaction` will pause on an interrupt and
+needs a thread so the run can be resumed:
 
-## Conventions
+```bash
+# 1. Create a thread
+TID=$(curl -sS -XPOST http://localhost:2024/threads \
+  -H 'Content-Type: application/json' -d '{}' | jq -r .thread_id)
+
+# 2. First turn — returns with the interrupt payload in `__interrupt__`
+curl -sS http://localhost:2024/threads/$TID/runs/wait \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "assistant_id": "agent",
+    "input": {"messages": [{"role": "user",
+      "content": "I spent $12.50 on coffee today at Blue Bottle"}]}
+  }' | jq
+
+# 3. Resume with yes/no — the tool either writes the row or cancels
+curl -sS http://localhost:2024/threads/$TID/runs/wait \
+  -H 'Content-Type: application/json' \
+  -d '{"assistant_id":"agent","command":{"resume":"yes"}}' \
+  | jq '.messages[-1].content'
+```
+
+Reuse the same `thread_id` for additional turns. The LangGraph dev API
+docs at `http://localhost:2024/docs` cover the full surface.
+
+## MCP server
+
+`src/agent/mcp_server.py` exposes the same DB operations as MCP tools so
+local clients (Claude Code, Claude Desktop, etc.) can use them directly
+without going through `langgraph dev`. The server uses stdio transport
+and is launched via the `budget-mcp` console script.
+
+Tools exposed: `list_categories`, `list_accounts`, `list_transactions`,
+`summarize_transactions`, `record_transaction`, `add_account`,
+`add_category`.
+
+### Confirmation model
+
+The MCP runtime has no `interrupt()` equivalent. Instead `record_transaction`
+uses a two-step confirm flag:
+
+- Call with `confirm=False` (default) → tool validates and returns
+  `{"status": "needs_confirmation", "transaction": {...}, "next": ...}`
+  without writing. The MCP client must show this preview to the user.
+- Call again with `confirm=True` after the user explicitly approves →
+  tool writes and returns `{"status": "recorded", "id": ..., ...}`.
+
+This relies on the MCP client (e.g. Claude Code) to act as the
+human-in-the-loop layer, which it already does conversationally. The
+LangGraph-side `record_transaction` still uses `interrupt()` — they're
+independent code paths sharing the SQLAlchemy models.
+
+### Wiring into Claude Code
+
+The repo ships a project-scoped `.mcp.json` that points Claude Code at
+`uv run budget-mcp`. After a fresh clone:
+
+```bash
+uv sync                       # picks up the `mcp` dep + budget-mcp script
+```
+
+Then restart Claude Code in the project directory. The first time it
+sees `.mcp.json` it will ask you to approve the server. Once approved,
+`/mcp` lists the connected server and its tools.
+
+### Manually
+
+```bash
+uv run budget-mcp             # starts the server on stdio (for debugging)
+```
 
 - Python 3.10+ (project pinned via `requires-python`).
 - Package layout is `src/`-based. New top-level packages must be registered
