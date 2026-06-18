@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -26,8 +27,10 @@ _DEFAULT_ACCOUNT_TYPES: tuple[str, ...] = (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DB_DIR = REPO_ROOT / "db"
-DB_PATH = DB_DIR / "budget.sqlite"
+# BUDGET_DB_PATH overrides the default for containers / tests.
+_DB_OVERRIDE = os.environ.get("BUDGET_DB_PATH")
+DB_PATH = Path(_DB_OVERRIDE) if _DB_OVERRIDE else REPO_ROOT / "db" / "budget.sqlite"
+DB_DIR = DB_PATH.parent
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(DATABASE_URL, echo=False, future=True)

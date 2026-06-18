@@ -2,15 +2,26 @@
 
 A LangGraph agent for recording and querying personal financial transactions
 through a chat interface (Claude Code, LangGraph Studio, etc.). Transactions
-are persisted to a local SQLite database managed by SQLAlchemy 2.0.
+are persisted to a local SQLite database managed by SQLAlchemy 2.0. A
+FastAPI service and React/shadcn web app provide a live dashboard and an
+admin UI on top of the same database.
 
 ## Layout
 
 - `src/agent/` — LangGraph agent package (entry point: `agent.graph:graph`)
 - `src/agent/db/` — SQLAlchemy models, engine, and session management
+- `src/agent/queries.py` — Pure-Python read helpers shared by the LangGraph
+  tools and the FastAPI routes. Edit transaction list/summary logic here;
+  `agent.tools` and `api.routers` both delegate.
+- `src/api/` — FastAPI app (entry point: `budget-api` console script,
+  serves at `http://localhost:8000`)
+- `web/` — Vite + React + TS + shadcn/ui frontend (admin + dashboard)
 - `db/budget.sqlite` — SQLite database file (gitignored)
+- `Dockerfile.api`, `web/Dockerfile`, `docker-compose.yml` — local-only
+  docker setup. Web (nginx) on port 8080, API on 8000. `.env.example`
+  documents the required vars (`ADMIN_PASSWORD`, `JWT_SECRET`, …).
 - `langgraph.json` — LangGraph CLI / Studio configuration
-- `.env` — local secrets (LangSmith key, etc.)
+- `.env` — local secrets (LangSmith key, admin password, JWT secret)
 
 ## Database
 
@@ -394,3 +405,40 @@ uv run budget-mcp             # starts the server on stdio (for debugging)
   `db/` data directory would shadow it as a namespace package.
 - Lint: `ruff` (Google docstring convention, see `[tool.ruff]`).
 - Tests: `pytest`, split into `tests/unit_tests/` and `tests/integration_tests/`.
+
+## API & web
+
+### Quick start
+
+```bash
+cp .env.example .env  # then edit ADMIN_PASSWORD + JWT_SECRET
+uv run budget-api     # http://localhost:8000  (FastAPI)
+cd web && npm install && npm run dev  # http://localhost:5173
+# Or, when docker is available:
+docker compose up --build  # web on http://localhost:8080
+```
+
+### Auth model
+
+- Admin: single password from `ADMIN_PASSWORD` env var, bcrypt-verified.
+  `POST /auth/login` sets an httpOnly JWT cookie scoped `admin`.
+- Service tokens: created via admin UI or `POST /auth/tokens`. Format:
+  `bgt_<base64url>`; sha256-hashed at rest in the `auth_tokens` table.
+  Scopes: `read` (dashboard only) or `admin` (full API). Pass as
+  `Authorization: Bearer <token>` for HTTP or `?token=<token>` for
+  WebSockets (browsers can't set custom headers on WS upgrade).
+
+### Live updates
+
+`/ws` is an in-process pub/sub broadcasting `transaction.new/updated/deleted`,
+`account.*`, `category.*`, `account_type.*`. API write endpoints publish
+inline; a background poller in `src/api/poller.py` scans new
+`transactions.created_at` rows so MCP/LangGraph writes still reach the
+dashboard. The API marks the poller cutoff after each broadcast to avoid
+duplicate events for API-originated writes. Polling interval is
+`POLL_INTERVAL_SECONDS` (default 3s).
+
+### Dashboard token URL
+
+Generate a `read` token from `/admin/tokens`; the dialog shows the URL
+to put on the wall display: `http://host/dashboard?token=bgt_…`.

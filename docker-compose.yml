@@ -1,0 +1,40 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: budget-graph-api:latest
+    container_name: budget-api
+    restart: unless-stopped
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-43200}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-3.0}
+      BUDGET_DB_PATH: /data/budget.sqlite
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./db:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8000}
+        VITE_WS_BASE: ${VITE_WS_BASE:-ws://localhost:8000}
+    image: budget-graph-web:latest
+    container_name: budget-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:8080:80"
