@@ -33,7 +33,17 @@ def _parse_amount(amount: float | int | str) -> Decimal:
         raise ValueError(f"invalid amount: {amount!r}") from e
 
 
-_AFFIRMATIVE = {"yes", "y", "confirm", "ok", "okay", "sure", "go", "do it"}
+_AFFIRMATIVE = {"yes", "y", "confirm", "ok", "okay", "sure", "go", "do it", "true"}
+
+_EDIT_FIELDS = (
+    "date",
+    "type",
+    "amount",
+    "description",
+    "category",
+    "account",
+    "is_test",
+)
 
 
 def _is_affirmative(answer: Any) -> bool:
@@ -48,6 +58,62 @@ def _is_affirmative(answer: Any) -> bool:
     if isinstance(answer, str):
         return answer.strip().lower() in _AFFIRMATIVE
     return False
+
+
+def _extract_edits(answer: Any) -> dict[str, Any]:
+    """Pull override fields out of a resume payload.
+
+    Returns a dict containing only the keys the user supplied (any of
+    `_EDIT_FIELDS`). For non-dict resume values, returns an empty dict.
+    Empty strings for `category` / `account` are preserved as a signal
+    that the caller wants to clear those fields.
+    """
+    if not isinstance(answer, dict):
+        return {}
+    edits: dict[str, Any] = {}
+    for key in _EDIT_FIELDS:
+        if key in answer:
+            edits[key] = answer[key]
+    return edits
+
+
+def _validate_proposed(
+    s: Any,
+    *,
+    type_name: str,
+    category: str | None,
+    account: str | None,
+) -> str | None:
+    """Validate a proposed type/category/account triple against the DB.
+
+    Returns an error string on failure, or None if the proposal is valid.
+    Performs all lookups in the given session.
+    """
+    try:
+        tt = s.query(TransactionType).filter_by(name=type_name).one()
+    except NoResultFound:
+        return f"unknown transaction type {type_name!r}; expected income/expense/transfer."
+
+    if category is not None and category != "":
+        matches = s.query(Category).filter_by(name=category, type_id=tt.id).all()
+        if not matches:
+            return (
+                f"no {type_name} category named {category!r}; "
+                f"add it first with add_category."
+            )
+        if len(matches) > 1:
+            return (
+                f"category {category!r} is ambiguous ({len(matches)} matches); "
+                f"specify a different name."
+            )
+
+    if account is not None and account != "":
+        if s.query(Account).filter_by(nickname=account).first() is None:
+            return (
+                f"no account with nickname {account!r}; "
+                f"add it first with add_account."
+            )
+    return None
 
 
 @tool
@@ -75,30 +141,11 @@ def record_transaction(
     parsed_amount = _parse_amount(amount)
 
     with session_scope() as s:
-        try:
-            tt = s.query(TransactionType).filter_by(name=type).one()
-        except NoResultFound:
-            return f"unknown transaction type {type!r}; expected income/expense/transfer."
-
-        if category is not None:
-            matches = s.query(Category).filter_by(name=category, type_id=tt.id).all()
-            if not matches:
-                return (
-                    f"no {type} category named {category!r}; "
-                    f"add it first with add_category."
-                )
-            if len(matches) > 1:
-                return (
-                    f"category {category!r} is ambiguous ({len(matches)} matches); "
-                    f"specify a different name."
-                )
-
-        if account is not None:
-            if s.query(Account).filter_by(nickname=account).first() is None:
-                return (
-                    f"no account with nickname {account!r}; "
-                    f"add it first with add_account."
-                )
+        err = _validate_proposed(
+            s, type_name=type, category=category, account=account
+        )
+        if err is not None:
+            return err
 
     preview = {
         "action": "record_transaction",
@@ -117,33 +164,88 @@ def record_transaction(
     if not _is_affirmative(answer):
         return f"transaction not recorded — user declined (response: {answer!r})."
 
+    # Merge any edits the user supplied on resume. Keys absent from the
+    # resume payload fall through to the originally proposed values; empty
+    # strings for category/account mean "clear that field".
+    edits = _extract_edits(answer)
+    final_type = edits["type"] if "type" in edits and edits["type"] is not None else type
+    final_description = (
+        edits["description"]
+        if "description" in edits and edits["description"] is not None
+        else description
+    )
+    final_is_test = bool(
+        edits["is_test"]
+        if "is_test" in edits and edits["is_test"] is not None
+        else is_test
+    )
+
+    if "date" in edits and edits["date"] is not None and edits["date"] != "":
+        try:
+            final_date = _parse_date(str(edits["date"]))
+        except ValueError:
+            return f"invalid date: {edits['date']!r} (expected YYYY-MM-DD)."
+    else:
+        final_date = parsed_date
+
+    if "amount" in edits and edits["amount"] is not None and edits["amount"] != "":
+        try:
+            final_amount = _parse_amount(edits["amount"])
+        except ValueError as e:
+            return str(e)
+    else:
+        final_amount = parsed_amount
+    if final_amount <= 0:
+        return f"invalid amount: {final_amount} (must be greater than 0)."
+
+    # For category/account, an empty string is meaningful ("none"); only
+    # missing keys fall through to the originals.
+    if "category" in edits:
+        raw_cat = edits["category"]
+        final_category: str | None = None if raw_cat in (None, "") else str(raw_cat)
+    else:
+        final_category = category
+    if "account" in edits:
+        raw_acct = edits["account"]
+        final_account: str | None = None if raw_acct in (None, "") else str(raw_acct)
+    else:
+        final_account = account
+
     with session_scope() as s:
-        tt = s.query(TransactionType).filter_by(name=type).one()
+        err = _validate_proposed(
+            s,
+            type_name=final_type,
+            category=final_category,
+            account=final_account,
+        )
+        if err is not None:
+            return err
+        tt = s.query(TransactionType).filter_by(name=final_type).one()
         cat = (
-            s.query(Category).filter_by(name=category, type_id=tt.id).one()
-            if category is not None
+            s.query(Category).filter_by(name=final_category, type_id=tt.id).one()
+            if final_category is not None
             else None
         )
         acct = (
-            s.query(Account).filter_by(nickname=account).one()
-            if account is not None
+            s.query(Account).filter_by(nickname=final_account).one()
+            if final_account is not None
             else None
         )
         tx = Transaction(
-            date=parsed_date,
-            amount=parsed_amount,
+            date=final_date,
+            amount=final_amount,
             type=tt,
             category=cat,
             account=acct,
-            description=description,
-            is_test=is_test,
+            description=final_description,
+            is_test=final_is_test,
         )
         s.add(tx)
         s.flush()
-        marker = " [TEST]" if is_test else ""
+        marker = " [TEST]" if final_is_test else ""
         return (
-            f"recorded transaction #{tx.id}{marker}: {tx.date} {type} "
-            f"${tx.amount} ({description!r})"
+            f"recorded transaction #{tx.id}{marker}: {tx.date} {final_type} "
+            f"${tx.amount} ({final_description!r})"
         )
 
 

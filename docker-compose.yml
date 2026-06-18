@@ -14,15 +14,40 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-3.0}
       BUDGET_DB_PATH: /data/budget.sqlite
+      MODELS_CONFIG_PATH: /app/models.json
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./db:/data
+      - ./models.json:/app/models.json:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 10s
       timeout: 3s
       retries: 5
+
+  langgraph:
+    build:
+      context: .
+      dockerfile: Dockerfile.langgraph
+    image: budget-graph-langgraph:latest
+    container_name: budget-langgraph
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BUDGET_DB_PATH: /data/budget.sqlite
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://host.docker.internal:9292/v1}
+      MODELS_CONFIG_PATH: /app/models.json
+    volumes:
+      - ./db:/data
+      - ./models.json:/app/models.json:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:2024:2024"
+    depends_on:
+      api:
+        condition: service_healthy
 
   web:
     build:
@@ -31,10 +56,12 @@ services:
       args:
         VITE_API_BASE: ${VITE_API_BASE:-/api}
         VITE_WS_BASE: ${VITE_WS_BASE-}
+        VITE_LANGGRAPH_BASE: ${VITE_LANGGRAPH_BASE:-/langgraph}
     image: budget-graph-web:latest
     container_name: budget-web
     restart: unless-stopped
     depends_on:
       - api
+      - langgraph
     ports:
       - "127.0.0.1:8080:80"

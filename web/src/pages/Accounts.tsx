@@ -18,8 +18,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { SortableHeader } from "@/components/ui/sortable-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { useTableSort } from "@/lib/useTableSort";
 
 interface Account {
   id: number;
@@ -43,7 +45,19 @@ export default function Accounts() {
   });
   const typesQ = useQuery({ queryKey: ["acct-types"], queryFn: () => api<AccountType[]>("/account-types") });
 
-  const rows = acctsQ.data ?? [];
+  const { sorted: rows, sort, toggle } = useTableSort<Account, "nickname" | "bank" | "type" | "last_four" | "status">(
+    acctsQ.data ?? [],
+    {
+      storageKey: "budget.sort.accounts",
+      columns: {
+        nickname: { accessor: (a) => a.nickname },
+        bank: { accessor: (a) => a.bank_name },
+        type: { accessor: (a) => a.account_type },
+        last_four: { accessor: (a) => a.last_four, type: "number" },
+        status: { accessor: (a) => (a.is_active ? "active" : "inactive") },
+      },
+    },
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -76,11 +90,21 @@ export default function Accounts() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Nickname</TableHead>
-                <TableHead>Bank</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead className="w-20">Last 4</TableHead>
-                <TableHead className="w-24">Status</TableHead>
+                <SortableHeader sortKey="nickname" sort={sort} onToggle={toggle}>
+                  Nickname
+                </SortableHeader>
+                <SortableHeader sortKey="bank" sort={sort} onToggle={toggle}>
+                  Bank
+                </SortableHeader>
+                <SortableHeader sortKey="type" sort={sort} onToggle={toggle}>
+                  Type
+                </SortableHeader>
+                <SortableHeader className="w-20" sortKey="last_four" sort={sort} onToggle={toggle}>
+                  Last 4
+                </SortableHeader>
+                <SortableHeader className="w-24" sortKey="status" sort={sort} onToggle={toggle}>
+                  Status
+                </SortableHeader>
                 <TableHead className="w-16" />
               </TableRow>
             </TableHeader>

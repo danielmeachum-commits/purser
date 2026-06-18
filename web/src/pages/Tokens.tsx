@@ -18,8 +18,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SortableHeader } from "@/components/ui/sortable-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { useTableSort } from "@/lib/useTableSort";
 import { formatDate } from "@/lib/utils";
 
 interface Token {
@@ -54,7 +56,19 @@ export default function Tokens() {
     setTimeout(() => setCopied(null), 1800);
   };
 
-  const rows = tokensQ.data ?? [];
+  const { sorted: rows, sort, toggle } = useTableSort<Token, "name" | "scope" | "created" | "last_used" | "status">(
+    tokensQ.data ?? [],
+    {
+      storageKey: "budget.sort.tokens",
+      columns: {
+        name: { accessor: (t) => t.name },
+        scope: { accessor: (t) => t.scope },
+        created: { accessor: (t) => t.created_at, type: "date" },
+        last_used: { accessor: (t) => t.last_used_at, type: "date" },
+        status: { accessor: (t) => (t.revoked_at ? "revoked" : "active") },
+      },
+    },
+  );
   const dashboardUrl = justCreated
     ? `${window.location.origin}/dashboard?token=${justCreated.token}`
     : "";
@@ -93,11 +107,21 @@ export default function Tokens() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead className="w-24">Scope</TableHead>
-                <TableHead className="w-28">Created</TableHead>
-                <TableHead className="w-28">Last used</TableHead>
-                <TableHead className="w-24">Status</TableHead>
+                <SortableHeader sortKey="name" sort={sort} onToggle={toggle}>
+                  Name
+                </SortableHeader>
+                <SortableHeader className="w-24" sortKey="scope" sort={sort} onToggle={toggle}>
+                  Scope
+                </SortableHeader>
+                <SortableHeader className="w-28" sortKey="created" sort={sort} onToggle={toggle}>
+                  Created
+                </SortableHeader>
+                <SortableHeader className="w-28" sortKey="last_used" sort={sort} onToggle={toggle}>
+                  Last used
+                </SortableHeader>
+                <SortableHeader className="w-24" sortKey="status" sort={sort} onToggle={toggle}>
+                  Status
+                </SortableHeader>
                 <TableHead className="w-16" />
               </TableRow>
             </TableHeader>

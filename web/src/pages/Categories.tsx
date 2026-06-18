@@ -24,8 +24,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { SortableHeader } from "@/components/ui/sortable-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { useTableSort } from "@/lib/useTableSort";
 
 interface Category {
   id: number;
@@ -44,9 +46,9 @@ export default function Categories() {
     queryFn: () => api<Category[]>("/categories", { query: { include_inactive: true } }),
   });
 
-  const rows = useMemo(() => {
+  const grouped = useMemo(() => {
     const data = catsQ.data ?? [];
-    // Group by type, then parent first then children for a nicer ordering.
+    // Group by type, then parent first then children for a nicer default ordering.
     const order = { expense: 0, income: 1, transfer: 2 } as const;
     return [...data].sort((a, b) => {
       if (a.type !== b.type) return order[a.type] - order[b.type];
@@ -56,6 +58,19 @@ export default function Categories() {
       return a.name.localeCompare(b.name);
     });
   }, [catsQ.data]);
+
+  const { sorted: rows, sort, toggle } = useTableSort<Category, "name" | "type" | "parent" | "status">(
+    grouped,
+    {
+      storageKey: "budget.sort.categories",
+      columns: {
+        name: { accessor: (c) => c.name },
+        type: { accessor: (c) => c.type },
+        parent: { accessor: (c) => c.parent },
+        status: { accessor: (c) => (c.is_active ? "active" : "inactive") },
+      },
+    },
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -88,10 +103,18 @@ export default function Categories() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead className="w-28">Type</TableHead>
-                <TableHead>Parent</TableHead>
-                <TableHead className="w-24">Status</TableHead>
+                <SortableHeader sortKey="name" sort={sort} onToggle={toggle}>
+                  Name
+                </SortableHeader>
+                <SortableHeader className="w-28" sortKey="type" sort={sort} onToggle={toggle}>
+                  Type
+                </SortableHeader>
+                <SortableHeader sortKey="parent" sort={sort} onToggle={toggle}>
+                  Parent
+                </SortableHeader>
+                <SortableHeader className="w-24" sortKey="status" sort={sort} onToggle={toggle}>
+                  Status
+                </SortableHeader>
                 <TableHead className="w-16" />
               </TableRow>
             </TableHeader>

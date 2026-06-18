@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
+  MessageSquare,
   CreditCard,
   Folder,
   ListOrdered,
@@ -15,6 +16,7 @@ import { cn } from "@/lib/utils";
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/admin/chat", label: "Chat", icon: MessageSquare },
   { to: "/admin/transactions", label: "Transactions", icon: ListOrdered },
   { to: "/admin/accounts", label: "Accounts", icon: CreditCard },
   { to: "/admin/categories", label: "Categories", icon: Folder },

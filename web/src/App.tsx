@@ -10,6 +10,7 @@ import Accounts from "@/pages/Accounts";
 import Categories from "@/pages/Categories";
 import Types from "@/pages/Types";
 import Tokens from "@/pages/Tokens";
+import Chat from "@/pages/Chat";
 import DashboardPublic from "@/pages/DashboardPublic";
 
 const qc = new QueryClient({
@@ -33,6 +34,7 @@ export default function App() {
             }
           >
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/admin/chat" element={<Chat />} />
             <Route path="/admin/transactions" element={<Transactions />} />
             <Route path="/admin/accounts" element={<Accounts />} />
             <Route path="/admin/categories" element={<Categories />} />

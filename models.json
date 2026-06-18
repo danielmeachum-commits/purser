@@ -1,0 +1,9 @@
+{
+  "default": "anthropic:claude-sonnet-4-6",
+  "models": [
+    {"id": "anthropic:claude-sonnet-4-6", "label": "Claude Sonnet 4.6", "service": "anthropic"},
+    {"id": "anthropic:claude-opus-4-7",   "label": "Claude Opus 4.7",   "service": "anthropic"},
+    {"id": "anthropic:claude-haiku-4-5",  "label": "Claude Haiku 4.5",  "service": "anthropic"},
+    {"id": "openai-compat:gpt-oss-20b",   "label": "Local (gpt-oss-20b via llama-swap)", "service": "openai-compat"}
+  ]
+}

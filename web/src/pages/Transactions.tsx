@@ -25,8 +25,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { SortableHeader } from "@/components/ui/sortable-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { useTableSort } from "@/lib/useTableSort";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
 interface Tx {
@@ -58,7 +60,7 @@ export default function Transactions() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["txs"] }),
   });
 
-  const rows = useMemo(() => {
+  const filtered = useMemo(() => {
     const all = txQ.data ?? [];
     if (!filter.trim()) return all;
     const q = filter.toLowerCase();
@@ -69,6 +71,22 @@ export default function Transactions() {
         (tx.account ?? "").toLowerCase().includes(q),
     );
   }, [txQ.data, filter]);
+
+  const { sorted: rows, sort, toggle } = useTableSort<Tx, "date" | "description" | "type" | "category" | "account" | "amount">(
+    filtered,
+    {
+      storageKey: "budget.sort.transactions",
+      initial: { key: "date", direction: "desc" },
+      columns: {
+        date: { accessor: (t) => t.date, type: "date" },
+        description: { accessor: (t) => t.description },
+        type: { accessor: (t) => t.type },
+        category: { accessor: (t) => t.category },
+        account: { accessor: (t) => t.account },
+        amount: { accessor: (t) => t.amount, type: "number" },
+      },
+    },
+  );
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -128,12 +146,24 @@ export default function Transactions() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-28">Date</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Account</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
+                <SortableHeader className="w-28" sortKey="date" sort={sort} onToggle={toggle}>
+                  Date
+                </SortableHeader>
+                <SortableHeader sortKey="description" sort={sort} onToggle={toggle}>
+                  Description
+                </SortableHeader>
+                <SortableHeader sortKey="type" sort={sort} onToggle={toggle}>
+                  Type
+                </SortableHeader>
+                <SortableHeader sortKey="category" sort={sort} onToggle={toggle}>
+                  Category
+                </SortableHeader>
+                <SortableHeader sortKey="account" sort={sort} onToggle={toggle}>
+                  Account
+                </SortableHeader>
+                <SortableHeader sortKey="amount" sort={sort} onToggle={toggle} align="right">
+                  Amount
+                </SortableHeader>
                 <TableHead className="w-24" />
               </TableRow>
             </TableHeader>
