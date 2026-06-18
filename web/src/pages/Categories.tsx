@@ -1,8 +1,11 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus } from "lucide-react";
+import { Folder, Pencil, Plus } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
+import PageHeader from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -41,56 +44,84 @@ export default function Categories() {
     queryFn: () => api<Category[]>("/categories", { query: { include_inactive: true } }),
   });
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Categories</h1>
-          <p className="text-sm text-muted-foreground">Spending and income categories.</p>
-        </div>
-        <Dialog open={creating} onOpenChange={setCreating}>
-          <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 mr-2" /> New category</Button>
-          </DialogTrigger>
-          <DialogContent>
-            <CategoryForm
-              all={catsQ.data ?? []}
-              onDone={() => { setCreating(false); qc.invalidateQueries({ queryKey: ["cats-all"] }); }}
-            />
-          </DialogContent>
-        </Dialog>
-      </div>
+  const rows = useMemo(() => {
+    const data = catsQ.data ?? [];
+    // Group by type, then parent first then children for a nicer ordering.
+    const order = { expense: 0, income: 1, transfer: 2 } as const;
+    return [...data].sort((a, b) => {
+      if (a.type !== b.type) return order[a.type] - order[b.type];
+      const ap = a.parent ?? "";
+      const bp = b.parent ?? "";
+      if (ap !== bp) return ap.localeCompare(bp);
+      return a.name.localeCompare(b.name);
+    });
+  }, [catsQ.data]);
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Parent</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="w-16" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {(catsQ.data ?? []).map((c) => (
-            <TableRow key={c.id}>
-              <TableCell className="font-medium">{c.name}</TableCell>
-              <TableCell><Badge variant={c.type}>{c.type}</Badge></TableCell>
-              <TableCell>{c.parent ?? "—"}</TableCell>
-              <TableCell>
-                <Badge variant={c.is_active ? "income" : "outline"}>
-                  {c.is_active ? "active" : "inactive"}
-                </Badge>
-              </TableCell>
-              <TableCell>
-                <Button size="icon" variant="ghost" onClick={() => setEditing(c)}>
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+  return (
+    <div className="mx-auto max-w-5xl space-y-6">
+      <PageHeader
+        title="Categories"
+        description="Spending and income buckets. Sub-categories inherit their parent's type."
+        actions={
+          <Dialog open={creating} onOpenChange={setCreating}>
+            <DialogTrigger asChild>
+              <Button><Plus className="h-4 w-4 mr-2" /> New category</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <CategoryForm
+                all={catsQ.data ?? []}
+                onDone={() => { setCreating(false); qc.invalidateQueries({ queryKey: ["cats-all"] }); }}
+              />
+            </DialogContent>
+          </Dialog>
+        }
+      />
+
+      <Card className="overflow-hidden">
+        {rows.length === 0 ? (
+          <EmptyState
+            icon={<Folder className="h-5 w-5" />}
+            title="No categories yet"
+            description="Add categories like “food” or “salary” to organize transactions."
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead className="w-28">Type</TableHead>
+                <TableHead>Parent</TableHead>
+                <TableHead className="w-24">Status</TableHead>
+                <TableHead className="w-16" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell className="font-medium">
+                    {c.parent && <span className="text-muted-foreground">↳ </span>}
+                    {c.name}
+                  </TableCell>
+                  <TableCell><Badge variant={c.type}>{c.type}</Badge></TableCell>
+                  <TableCell className="text-muted-foreground">{c.parent ?? "—"}</TableCell>
+                  <TableCell>
+                    <Badge variant={c.is_active ? "income" : "outline"}>
+                      {c.is_active ? "active" : "inactive"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex justify-end">
+                      <Button size="icon" variant="ghost" onClick={() => setEditing(c)} aria-label="Edit">
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Card>
 
       <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>
@@ -159,7 +190,12 @@ function CategoryForm({
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2 col-span-2">
           <Label>Name</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} required />
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. groceries"
+            required
+          />
         </div>
         <div className="space-y-2">
           <Label>Type</Label>
@@ -183,15 +219,19 @@ function CategoryForm({
           </Select>
         </div>
         {isEdit && (
-          <div className="flex items-center gap-2">
+          <div className="col-span-2 flex items-center gap-2 pt-1">
             <Switch checked={isActive} onCheckedChange={setIsActive} id="cat-active" />
-            <Label htmlFor="cat-active">Active</Label>
+            <Label htmlFor="cat-active" className="cursor-pointer">
+              Active
+            </Label>
           </div>
         )}
       </div>
       {error && <div className="text-sm text-destructive">{error}</div>}
       <DialogFooter>
-        <Button type="submit" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
+        <Button type="submit" disabled={save.isPending}>
+          {save.isPending ? "Saving…" : isEdit ? "Save changes" : "Create"}
+        </Button>
       </DialogFooter>
     </form>
   );

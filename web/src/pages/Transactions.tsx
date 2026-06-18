@@ -1,8 +1,11 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { ListOrdered, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
+import PageHeader from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +47,7 @@ export default function Transactions() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Tx | null>(null);
   const [creating, setCreating] = useState(false);
+  const [filter, setFilter] = useState("");
 
   const txQ = useQuery({ queryKey: ["txs"], queryFn: () => api<Tx[]>("/transactions", { query: { limit: 200, test_mode: "include" } }) });
   const catsQ = useQuery({ queryKey: ["cats"], queryFn: () => api<Cat[]>("/categories") });
@@ -54,80 +58,139 @@ export default function Transactions() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["txs"] }),
   });
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Transactions</h1>
-          <p className="text-sm text-muted-foreground">All recorded transactions.</p>
-        </div>
-        <Dialog open={creating} onOpenChange={setCreating}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" /> New
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <TxForm
-              categories={catsQ.data ?? []}
-              accounts={acctsQ.data ?? []}
-              onDone={() => {
-                setCreating(false);
-                qc.invalidateQueries({ queryKey: ["txs"] });
-              }}
-            />
-          </DialogContent>
-        </Dialog>
-      </div>
+  const rows = useMemo(() => {
+    const all = txQ.data ?? [];
+    if (!filter.trim()) return all;
+    const q = filter.toLowerCase();
+    return all.filter(
+      (tx) =>
+        tx.description.toLowerCase().includes(q) ||
+        (tx.category ?? "").toLowerCase().includes(q) ||
+        (tx.account ?? "").toLowerCase().includes(q),
+    );
+  }, [txQ.data, filter]);
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Date</TableHead>
-            <TableHead>Description</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Category</TableHead>
-            <TableHead>Account</TableHead>
-            <TableHead className="text-right">Amount</TableHead>
-            <TableHead className="w-24" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {(txQ.data ?? []).map((tx) => (
-            <TableRow key={tx.id}>
-              <TableCell className="whitespace-nowrap">{formatDate(tx.date)}</TableCell>
-              <TableCell>
-                {tx.description}
-                {tx.is_test && (
-                  <Badge variant="outline" className="ml-2">
-                    test
-                  </Badge>
-                )}
-              </TableCell>
-              <TableCell><Badge variant={tx.type}>{tx.type}</Badge></TableCell>
-              <TableCell>{tx.category ?? "—"}</TableCell>
-              <TableCell>{tx.account ?? "—"}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatCurrency(tx.amount)}</TableCell>
-              <TableCell>
-                <div className="flex gap-1 justify-end">
-                  <Button size="icon" variant="ghost" onClick={() => setEditing(tx)}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => {
-                      if (confirm(`Delete transaction "${tx.description}"?`)) del.mutate(tx.id);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+  return (
+    <div className="mx-auto max-w-6xl space-y-6">
+      <PageHeader
+        title="Transactions"
+        description="Every income, expense, and transfer recorded across your accounts."
+        actions={
+          <Dialog open={creating} onOpenChange={setCreating}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" /> New
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <TxForm
+                categories={catsQ.data ?? []}
+                accounts={acctsQ.data ?? []}
+                onDone={() => {
+                  setCreating(false);
+                  qc.invalidateQueries({ queryKey: ["txs"] });
+                }}
+              />
+            </DialogContent>
+          </Dialog>
+        }
+      />
+
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between gap-4 border-b px-4 py-3">
+          <div className="relative w-full max-w-sm">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter by description, category, or account…"
+              className="pl-8"
+            />
+          </div>
+          <div className="text-xs text-muted-foreground tabular-nums">
+            {rows.length}
+            {rows.length !== (txQ.data?.length ?? 0) && ` of ${txQ.data?.length ?? 0}`}
+            {rows.length === 1 ? " row" : " rows"}
+          </div>
+        </div>
+
+        {rows.length === 0 ? (
+          <EmptyState
+            icon={<ListOrdered className="h-5 w-5" />}
+            title={filter ? "No matches" : "No transactions yet"}
+            description={
+              filter
+                ? "Try a different filter."
+                : "Click “New” to record one, or log it via the LangGraph agent."
+            }
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-28">Date</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Account</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="w-24" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((tx) => (
+                <TableRow key={tx.id}>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">
+                    {formatDate(tx.date)}
+                  </TableCell>
+                  <TableCell>
+                    <span className="font-medium">{tx.description}</span>
+                    {tx.is_test && (
+                      <Badge variant="outline" className="ml-2">
+                        test
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={tx.type}>{tx.type}</Badge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {tx.category ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {tx.account ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">
+                    {formatCurrency(tx.amount)}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => setEditing(tx)}
+                        aria-label="Edit"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => {
+                          if (confirm(`Delete transaction "${tx.description}"?`)) del.mutate(tx.id);
+                        }}
+                        aria-label="Delete"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Card>
 
       <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>
@@ -196,7 +259,9 @@ function TxForm({ tx, categories, accounts, onDone }: FormProps) {
     <form onSubmit={onSubmit} className="space-y-4">
       <DialogHeader>
         <DialogTitle>{isEdit ? "Edit transaction" : "New transaction"}</DialogTitle>
-        <DialogDescription>All fields except category and account are required.</DialogDescription>
+        <DialogDescription>
+          Amount is always positive — direction comes from the type.
+        </DialogDescription>
       </DialogHeader>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
@@ -216,7 +281,13 @@ function TxForm({ tx, categories, accounts, onDone }: FormProps) {
         </div>
         <div className="space-y-2">
           <Label>Amount</Label>
-          <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" required />
+          <Input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0.00"
+            inputMode="decimal"
+            required
+          />
         </div>
         <div className="space-y-2">
           <Label>Description</Label>
@@ -247,14 +318,16 @@ function TxForm({ tx, categories, accounts, onDone }: FormProps) {
           </Select>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 pt-2">
         <Switch checked={isTest} onCheckedChange={setIsTest} id="isTest" />
-        <Label htmlFor="isTest">Test transaction</Label>
+        <Label htmlFor="isTest" className="cursor-pointer">
+          Mark as test (excluded from summaries by default)
+        </Label>
       </div>
       {error && <div className="text-sm text-destructive">{error}</div>}
       <DialogFooter>
         <Button type="submit" disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save"}
+          {save.isPending ? "Saving…" : isEdit ? "Save changes" : "Create"}
         </Button>
       </DialogFooter>
     </form>
