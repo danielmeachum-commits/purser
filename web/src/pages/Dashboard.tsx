@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDownLeft, ArrowUpRight, ChevronRight, PiggyBank, Scale } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, PiggyBank, RefreshCw, Scale } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { useEventStream } from "@/lib/ws";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 
@@ -227,6 +228,20 @@ export default function Dashboard() {
     ? `${formatDate(month.start)} – ${formatDate(month.end)}`
     : "Loading…";
 
+  const { scope } = useAuth();
+  const [einkState, setEinkState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  async function refreshEink() {
+    setEinkState("sending");
+    try {
+      await api("/eink/refresh", { method: "POST" });
+      setEinkState("sent");
+      setTimeout(() => setEinkState("idle"), 3000);
+    } catch {
+      setEinkState("error");
+      setTimeout(() => setEinkState("idle"), 4000);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex items-end justify-between gap-4 flex-wrap">
@@ -234,7 +249,27 @@ export default function Dashboard() {
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground">{dateRangeLabel}</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          {scope === "admin" && (
+            <button
+              type="button"
+              onClick={refreshEink}
+              disabled={einkState === "sending"}
+              className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1 text-xs hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+              title="Tell the Inky display to refresh now"
+            >
+              <RefreshCw
+                className={cn("h-3.5 w-3.5", einkState === "sending" && "animate-spin")}
+              />
+              {einkState === "sent"
+                ? "Sent"
+                : einkState === "error"
+                  ? "Failed"
+                  : einkState === "sending"
+                    ? "Sending…"
+                    : "Refresh Inky"}
+            </button>
+          )}
           <span
             className={cn(
               "inline-block h-2 w-2 rounded-full",

@@ -53,6 +53,17 @@ def push_to_inky(png_bytes: bytes) -> None:
     display.show()
 
 
+def refresh(api_url: str, token: str) -> None:
+    """Fetch the latest eink PNG and push it to the panel.
+
+    Raises on any failure; callers decide whether to swallow or propagate.
+    """
+    png = fetch_png(api_url, token)
+    LOG.info("fetched %d bytes; pushing to Inky", len(png))
+    push_to_inky(png)
+    LOG.info("display refreshed")
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -65,21 +76,16 @@ def main() -> int:
         return 2
 
     try:
-        png = fetch_png(api_url, token)
+        refresh(api_url, token)
     except urllib.error.HTTPError as e:
         LOG.error("fetch failed: HTTP %s — %s", e.code, e.reason)
         return 1
     except (urllib.error.URLError, TimeoutError, RuntimeError) as e:
         LOG.error("fetch failed: %s", e)
         return 1
-
-    LOG.info("fetched %d bytes; pushing to Inky", len(png))
-    try:
-        push_to_inky(png)
-    except Exception as e:  # noqa: BLE001 — surface anything from the panel
+    except Exception as e:  # noqa: BLE001
         LOG.exception("inky push failed: %s", e)
         return 1
-    LOG.info("display refreshed")
     return 0
 
 

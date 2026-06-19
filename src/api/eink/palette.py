@@ -46,8 +46,15 @@ def _palette_image() -> Image.Image:
 _PALETTE = _palette_image()
 
 
-def quantize_to_inky(img: Image.Image) -> Image.Image:
-    """Floyd-Steinberg dither `img` (RGB) to the Inky 7-color palette."""
+def quantize_to_inky(img: Image.Image, *, dither: bool = False) -> Image.Image:
+    """Quantize `img` (RGB) to the Inky palette.
+
+    `dither=False` (default) snaps each pixel to the nearest palette color.
+    That keeps black text crisp at the cost of some banding in color regions
+    — the right trade for a finance dashboard where the bars are already
+    solid colors. Pass `dither=True` for photo-like content.
+    """
     if img.mode != "RGB":
         img = img.convert("RGB")
-    return img.quantize(palette=_PALETTE, dither=Image.Dither.FLOYDSTEINBERG)
+    mode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
+    return img.quantize(palette=_PALETTE, dither=mode)

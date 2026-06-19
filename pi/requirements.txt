@@ -1,0 +1,6 @@
+# Installed into the same venv as `inky` (e.g. ~/.virtualenvs/pimoroni).
+#   ~/.virtualenvs/pimoroni/bin/pip install -r requirements.txt
+#
+# `inky` and `Pillow` are pulled in by the Pimoroni installer; this file
+# only adds what the WebSocket listener needs on top.
+websockets>=13.0

@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=pi
+User=hobbes
 EnvironmentFile=/etc/budget-eink/config.env
-ExecStart=/usr/bin/env python3 /home/pi/budget-eink/client.py
+ExecStart=/home/hobbes/.virtualenvs/pimoroni/bin/python /home/hobbes/budget-eink/client.py
 # The Inky 7.3" takes ~30s to refresh; give it room.
 TimeoutStartSec=120

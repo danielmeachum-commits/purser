@@ -1,0 +1,15 @@
+[Unit]
+Description=Listen for budget events and refresh the Inky on signal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hobbes
+EnvironmentFile=/etc/budget-eink/config.env
+ExecStart=/home/hobbes/.virtualenvs/pimoroni/bin/python /home/hobbes/budget-eink/listener.py
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

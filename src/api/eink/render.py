@@ -69,6 +69,16 @@ def _fmt_money(value: Decimal, *, signed: bool = False) -> str:
     return f"{sign}${whole:,}"
 
 
+def _truncate(
+    draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_w: int
+) -> str:
+    if draw.textlength(text, font=font) <= max_w:
+        return text
+    while len(text) > 1 and draw.textlength(text + "…", font=font) > max_w:
+        text = text[:-1]
+    return text + "…"
+
+
 def _budget_color(ratio: float) -> tuple[int, int, int]:
     if ratio >= 1.0:
         return RED
@@ -164,57 +174,60 @@ def render_eink_image() -> Image.Image:
     img = Image.new("RGB", (W, H), WHITE)
     d = ImageDraw.Draw(img)
 
-    # --- Header --------------------------------------------------------
-    f_label = _font(18)
-    f_huge = _font(56)
-    f_small = _font(16)
-    f_row = _font(22)
-    f_section = _font(20)
+    f_label = _font(24)
+    f_huge = _font(80)
+    f_small = _font(20)
+    f_row = _font(28)
+    f_section = _font(26)
 
+    # --- Header --------------------------------------------------------
     net = Decimal(summary.get("net", "0"))
     net_color = GREEN if net >= 0 else RED
 
-    d.text((20, 14), "MONTH-TO-DATE NET", font=f_label, fill=BLACK)
-    d.text((20, 36), _fmt_money(net, signed=True), font=f_huge, fill=net_color)
-
     today = datetime.now()
-    month_label = today.strftime("%B %Y")
     days_in_month = calendar.monthrange(today.year, today.month)[1]
-    subtitle = f"{month_label}  ·  day {today.day}/{days_in_month}"
-    d.text((W - 20 - int(d.textlength(subtitle, font=f_small)), 18), subtitle,
-           font=f_small, fill=BLACK)
+    month_label = today.strftime("%B %Y")
+    subtitle = f"{month_label} · day {today.day}/{days_in_month}"
+
+    d.text((20, 12), "MONTH-TO-DATE NET", font=f_label, fill=BLACK)
+    d.text((20, 36), _fmt_money(net, signed=True), font=f_huge, fill=net_color)
+    d.text(
+        (W - 20 - int(d.textlength(subtitle, font=f_small)), 18),
+        subtitle,
+        font=f_small,
+        fill=BLACK,
+    )
 
     inflow = Decimal(summary.get("inflow", "0"))
     outflow = Decimal(summary.get("outflow", "0"))  # already negative
-    inout = f"in {_fmt_money(inflow)}   out {_fmt_money(-outflow)}"
-    d.text((W - 20 - int(d.textlength(inout, font=f_small)), 42), inout,
-           font=f_small, fill=BLACK)
+    inout = f"in {_fmt_money(inflow)}    out {_fmt_money(-outflow)}"
+    d.text(
+        (W - 20 - int(d.textlength(inout, font=f_small)), 50),
+        inout,
+        font=f_small,
+        fill=BLACK,
+    )
 
-    d.line((20, 100, W - 20, 100), fill=BLACK, width=2)
+    d.line((20, 130, W - 20, 130), fill=BLACK, width=2)
 
     # --- Categories ----------------------------------------------------
-    d.text((20, 110), "BUDGETS", font=f_section, fill=BLACK)
-    rows = _pick_category_rows(_rollup_categories(breakdown.get("categories", [])))
-    row_y = 140
-    row_h = 36
     name_x = 20
-    bar_x0 = 200
-    bar_x1 = 560
-    value_x = 580
-    for row in rows[:5]:
+    bar_x0 = 230
+    bar_x1 = 540
+    value_x = 560
+
+    d.text((20, 140), "BUDGETS", font=f_section, fill=BLACK)
+    rows = _pick_category_rows(_rollup_categories(breakdown.get("categories", [])))
+    row_y = 178
+    row_h = 46
+    for row in rows[:4]:
         spent = row["spent"]
         budget = row["monthly_budget"]
         ratio = float(spent / budget) if budget and budget > 0 else 0.0
         color = _budget_color(ratio) if budget else BLUE
-        name = row["name"]
-        # Truncate long names.
-        max_name_w = bar_x0 - name_x - 10
-        while d.textlength(name, font=f_row) > max_name_w and len(name) > 1:
-            name = name[:-1]
-        if name != row["name"]:
-            name = name[:-1] + "…"
+        name = _truncate(d, row["name"], f_row, bar_x0 - name_x - 10)
         d.text((name_x, row_y), name, font=f_row, fill=BLACK)
-        _draw_progress_bar(d, (bar_x0, row_y + 6, bar_x1, row_y + 24), ratio, color)
+        _draw_progress_bar(d, (bar_x0, row_y + 6, bar_x1, row_y + 30), ratio, color)
         if budget:
             txt = f"{_fmt_money(spent)} / {_fmt_money(budget)}"
         else:
@@ -223,23 +236,18 @@ def render_eink_image() -> Image.Image:
         row_y += row_h
 
     # --- Savings goals -------------------------------------------------
-    section_y = 340
+    section_y = 364
     d.line((20, section_y - 4, W - 20, section_y - 4), fill=BLACK, width=2)
     d.text((20, section_y), "SAVINGS GOALS", font=f_section, fill=BLACK)
-    g_y = section_y + 30
-    g_h = 36
-    for g in goals[:3]:
+    g_y = section_y + 40
+    g_h = 46
+    for g in goals[:2]:
         target = Decimal(g["target_amount"])
         allocated = Decimal(g["allocated_amount"])
         ratio = float(allocated / target) if target > 0 else 0.0
-        name = g["name"]
-        max_name_w = bar_x0 - name_x - 10
-        while d.textlength(name, font=f_row) > max_name_w and len(name) > 1:
-            name = name[:-1]
-        if name != g["name"]:
-            name = name[:-1] + "…"
+        name = _truncate(d, g["name"], f_row, bar_x0 - name_x - 10)
         d.text((name_x, g_y), name, font=f_row, fill=BLACK)
-        _draw_progress_bar(d, (bar_x0, g_y + 6, bar_x1, g_y + 24), ratio, BLUE)
+        _draw_progress_bar(d, (bar_x0, g_y + 6, bar_x1, g_y + 30), ratio, BLUE)
         txt = f"{_fmt_money(allocated)} / {_fmt_money(target)}"
         d.text((value_x, g_y), txt, font=f_row, fill=BLACK)
         g_y += g_h
@@ -250,7 +258,7 @@ def render_eink_image() -> Image.Image:
     # --- Footer --------------------------------------------------------
     updated = f"updated {today.strftime('%Y-%m-%d %H:%M')}"
     d.text(
-        (W - 20 - int(d.textlength(updated, font=f_small)), H - 22),
+        (W - 20 - int(d.textlength(updated, font=f_small)), H - 24),
         updated,
         font=f_small,
         fill=BLACK,
