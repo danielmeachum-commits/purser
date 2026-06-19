@@ -19,6 +19,7 @@ from agent.db import (
     Account,
     AccountType,
     Category,
+    SavingsGoal,
     Transaction,
     TransactionType,
     session_scope,
@@ -379,8 +380,107 @@ def _serialize_category(c: Category) -> dict[str, Any]:
         "parent": c.parent.name if c.parent else None,
         "parent_id": c.parent_id,
         "is_active": c.is_active,
+        "monthly_budget": str(c.monthly_budget) if c.monthly_budget is not None else None,
+        "target_amount": str(c.target_amount) if c.target_amount is not None else None,
         "created_at": c.created_at.isoformat() if c.created_at else None,
     }
+
+
+def _serialize_savings_goal(g: SavingsGoal) -> dict[str, Any]:
+    return {
+        "id": g.id,
+        "name": g.name,
+        "target_amount": str(g.target_amount),
+        "allocated_amount": str(g.allocated_amount),
+        "account": g.account.nickname if g.account else None,
+        "account_id": g.account_id,
+        "notes": g.notes,
+        "is_active": g.is_active,
+        "created_at": g.created_at.isoformat() if g.created_at else None,
+    }
+
+
+def list_savings_goals(*, include_inactive: bool = False) -> list[dict[str, Any]]:
+    """List savings goals, ordered by name."""
+    with session_scope() as s:
+        q = s.query(SavingsGoal)
+        if not include_inactive:
+            q = q.filter(SavingsGoal.is_active.is_(True))
+        return [_serialize_savings_goal(g) for g in q.order_by(SavingsGoal.name).all()]
+
+
+def category_breakdown(
+    *,
+    date_range: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    test_mode: str = "exclude",
+) -> dict[str, Any]:
+    """Per-category direct totals for the window, keyed by category id.
+
+    Returns every active category (so the dashboard can show zero rows for
+    budgeted-but-unused categories), with parent_id, budget fields, and
+    the direct net/count over the requested window. Rollup totals are the
+    client's job — names alone aren't unique enough to nest safely.
+    """
+    if test_mode not in TEST_MODES:
+        return {"error": f"test_mode must be one of {TEST_MODES}, got {test_mode!r}"}
+    window = _resolve_window(date_range, start_date, end_date)
+    if isinstance(window, dict):
+        return window
+    start, end = window
+
+    with session_scope() as s:
+        cats = (
+            s.query(Category)
+            .filter(Category.is_active.is_(True))
+            .order_by(Category.type_id, Category.parent_id.is_(None).desc(), Category.name)
+            .all()
+        )
+        rows = (
+            s.query(
+                Transaction.category_id,
+                Transaction.amount,
+                TransactionType.sign,
+            )
+            .join(Transaction.type)
+            .filter(Transaction.date >= start, Transaction.date <= end)
+        )
+        rows = _apply_test_mode(rows, test_mode).all()
+
+        direct: dict[int, dict[str, Any]] = {}
+        for cat_id, amount, sign in rows:
+            if cat_id is None:
+                continue
+            acc = direct.setdefault(
+                cat_id, {"net": Decimal("0"), "count": 0}
+            )
+            acc["net"] += amount * sign
+            acc["count"] += 1
+
+        categories = []
+        for c in cats:
+            acc = direct.get(c.id, {"net": Decimal("0"), "count": 0})
+            categories.append({
+                "id": c.id,
+                "name": c.name,
+                "type": c.type.name,
+                "parent_id": c.parent_id,
+                "monthly_budget": (
+                    str(c.monthly_budget) if c.monthly_budget is not None else None
+                ),
+                "target_amount": (
+                    str(c.target_amount) if c.target_amount is not None else None
+                ),
+                "direct_net": str(acc["net"]),
+                "direct_count": acc["count"],
+            })
+
+        return {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "categories": categories,
+        }
 
 
 def _serialize_account(a: Account) -> dict[str, Any]:
@@ -421,10 +521,12 @@ __all__ = [
     "PERIOD_FORMATS",
     "TEST_MODES",
     "Session",
+    "category_breakdown",
     "get_transaction",
     "list_account_types",
     "list_accounts",
     "list_categories",
+    "list_savings_goals",
     "list_transaction_types",
     "list_transactions",
     "summarize_transactions",

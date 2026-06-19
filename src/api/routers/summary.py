@@ -45,3 +45,28 @@ def summary(
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+@router.get("/summary/categories")
+def category_breakdown(
+    date_range: str | None = Query(default=None),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+    test_mode: str = Query(default="exclude"),
+    _: Principal = Depends(require_reader),
+) -> dict:
+    """Per-category direct totals with parent_id + budget fields.
+
+    Dedicated to the dashboard's nested-by-parent view: keys by category
+    id (not name) so children can be safely re-attached to their parent.
+    Rollups are computed client-side.
+    """
+    result = queries.category_breakdown(
+        date_range=date_range,
+        start_date=start_date,
+        end_date=end_date,
+        test_mode=test_mode,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result

@@ -6,6 +6,7 @@ import {
   CreditCard,
   Folder,
   ListOrdered,
+  PiggyBank,
   Tags,
   KeyRound,
   LogOut,
@@ -20,6 +21,7 @@ const nav = [
   { to: "/admin/transactions", label: "Transactions", icon: ListOrdered },
   { to: "/admin/accounts", label: "Accounts", icon: CreditCard },
   { to: "/admin/categories", label: "Categories", icon: Folder },
+  { to: "/admin/savings", label: "Savings goals", icon: PiggyBank },
   { to: "/admin/types", label: "Account types", icon: Tags },
   { to: "/admin/tokens", label: "Service tokens", icon: KeyRound },
 ];

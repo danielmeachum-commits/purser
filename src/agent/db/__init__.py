@@ -13,6 +13,7 @@ from agent.db.models import (
     AccountType,
     Base,
     Category,
+    SavingsGoal,
     Transaction,
     TransactionType,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "Category",
     "DATABASE_URL",
     "DB_PATH",
+    "SavingsGoal",
     "SessionLocal",
     "Transaction",
     "TransactionType",

@@ -95,6 +95,8 @@ class Category(BaseModel):
     parent: str | None = None
     parent_id: int | None = None
     is_active: bool
+    monthly_budget: Decimal | None = None
+    target_amount: Decimal | None = None
     created_at: datetime
 
 
@@ -102,11 +104,58 @@ class CategoryCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     type: Literal["income", "expense", "transfer"]
     parent: str | None = None
+    monthly_budget: Decimal | None = None
+    target_amount: Decimal | None = None
 
 
 class CategoryUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
     parent: str | None = None
+    is_active: bool | None = None
+    # Use a sentinel string "" for "clear this field" (matches parent's
+    # existing convention). Decimal | None means "not set"; explicit null
+    # in JSON also means clear.
+    monthly_budget: Decimal | None = None
+    target_amount: Decimal | None = None
+    clear_monthly_budget: bool = False
+    clear_target_amount: bool = False
+
+
+# --- savings goals ---------------------------------------------------------
+
+
+class SavingsGoal(BaseModel):
+    """Response shape for a savings goal."""
+
+    id: int
+    name: str
+    target_amount: Decimal
+    allocated_amount: Decimal
+    account: str | None = None
+    account_id: int | None = None
+    notes: str | None = None
+    is_active: bool
+    created_at: datetime
+
+
+class SavingsGoalCreate(BaseModel):
+    """Body for POST /savings-goals."""
+
+    name: str = Field(min_length=1, max_length=64)
+    target_amount: Decimal = Field(gt=0)
+    allocated_amount: Decimal = Field(default=Decimal("0"), ge=0)
+    account: str | None = None
+    notes: str | None = Field(default=None, max_length=255)
+
+
+class SavingsGoalUpdate(BaseModel):
+    """Body for PATCH /savings-goals/{id}; "" on `account` clears it."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    target_amount: Decimal | None = Field(default=None, gt=0)
+    allocated_amount: Decimal | None = Field(default=None, ge=0)
+    account: str | None = None
+    notes: str | None = Field(default=None, max_length=255)
     is_active: bool | None = None
 
 

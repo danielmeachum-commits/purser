@@ -21,6 +21,8 @@ def _serialize(c: Category) -> dict:
         "parent": c.parent.name if c.parent else None,
         "parent_id": c.parent_id,
         "is_active": c.is_active,
+        "monthly_budget": str(c.monthly_budget) if c.monthly_budget is not None else None,
+        "target_amount": str(c.target_amount) if c.target_amount is not None else None,
         "created_at": c.created_at.isoformat() if c.created_at else None,
     }
 
@@ -70,7 +72,13 @@ def create_category(
                 detail="category already exists with that name+parent+type",
             )
         try:
-            cat = Category(name=body.name, type=tt, parent=parent_cat)
+            cat = Category(
+                name=body.name,
+                type=tt,
+                parent=parent_cat,
+                monthly_budget=body.monthly_budget,
+                target_amount=body.target_amount,
+            )
             s.add(cat)
             s.flush()
         except ValueError as e:
@@ -105,6 +113,14 @@ def update_category(
                 cat.parent = matches[0]
         if body.is_active is not None:
             cat.is_active = body.is_active
+        if body.clear_monthly_budget:
+            cat.monthly_budget = None
+        elif body.monthly_budget is not None:
+            cat.monthly_budget = body.monthly_budget
+        if body.clear_target_amount:
+            cat.target_amount = None
+        elif body.target_amount is not None:
+            cat.target_amount = body.target_amount
         s.flush()
         result = _serialize(cat)
     broadcast({"type": "category.updated", "category": result})

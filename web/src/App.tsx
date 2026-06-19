@@ -8,6 +8,7 @@ import Login from "@/pages/Login";
 import Transactions from "@/pages/Transactions";
 import Accounts from "@/pages/Accounts";
 import Categories from "@/pages/Categories";
+import Savings from "@/pages/Savings";
 import Types from "@/pages/Types";
 import Tokens from "@/pages/Tokens";
 import Chat from "@/pages/Chat";
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="/admin/transactions" element={<Transactions />} />
             <Route path="/admin/accounts" element={<Accounts />} />
             <Route path="/admin/categories" element={<Categories />} />
+            <Route path="/admin/savings" element={<Savings />} />
             <Route path="/admin/types" element={<Types />} />
             <Route path="/admin/tokens" element={<Tokens />} />
           </Route>

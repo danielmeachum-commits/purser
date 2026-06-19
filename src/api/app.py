@@ -16,6 +16,7 @@ from api.routers import (
     auth as auth_router,
     categories as categories_router,
     models as models_router,
+    savings as savings_router,
     summary as summary_router,
     transactions as transactions_router,
     ws as ws_router,
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(categories_router.router)
     app.include_router(transactions_router.router)
     app.include_router(summary_router.router)
+    app.include_router(savings_router.router)
     app.include_router(models_router.router)
     app.include_router(ws_router.router)
 

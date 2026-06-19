@@ -27,14 +27,16 @@ admin UI on top of the same database.
 
 - ORM: SQLAlchemy 2.0 (`DeclarativeBase` + `Mapped[...]` style)
 - Engine URL: `sqlite:///<repo-root>/db/budget.sqlite`
-- No migration tool (Alembic) yet — schema is created with
-  `Base.metadata.create_all()`. If the schema changes, either delete
-  `db/budget.sqlite` and re-run `init_db()`, or add Alembic.
+- Migrations: Alembic (`alembic.ini` + `migrations/`). `init_db()` runs
+  `alembic upgrade head` on every boot. Pre-Alembic SQLite files (created
+  via the old `create_all` path) are auto-stamped at the baseline
+  revision on first run, so existing data survives the upgrade.
 
 ### Schema
 
-Five tables: three lookups (`transaction_types`, `account_types`), two
-"real" tables (`accounts`, `categories`), and the `transactions` fact table.
+Six tables: three lookups (`transaction_types`, `account_types`), two
+"real" tables (`accounts`, `categories`), the `transactions` fact table,
+and `savings_goals` for manually-tracked savings targets.
 
 #### `transaction_types`
 | column | type             | notes                                       |
@@ -65,19 +67,38 @@ Seeded by `init_db()`.
 | `created_at`      | DATETIME             | server default `CURRENT_TIMESTAMP`                   |
 
 #### `categories` — hierarchical, tied to a transaction type
-| column       | type        | notes                                                       |
-|--------------|-------------|-------------------------------------------------------------|
-| `id`         | INTEGER PK  |                                                             |
-| `name`       | VARCHAR(64) |                                                             |
-| `type_id`    | INTEGER FK  | → `transaction_types.id`; income-only or expense-only       |
-| `parent_id`  | INTEGER FK  | → `categories.id`; nullable (top-level when NULL)           |
-| `is_active`  | BOOLEAN     | default TRUE                                                |
-| `created_at` | DATETIME    | server default `CURRENT_TIMESTAMP`                          |
+| column            | type           | notes                                                       |
+|-------------------|----------------|-------------------------------------------------------------|
+| `id`              | INTEGER PK     |                                                             |
+| `name`            | VARCHAR(64)    |                                                             |
+| `type_id`         | INTEGER FK     | → `transaction_types.id`; income-only or expense-only       |
+| `parent_id`       | INTEGER FK     | → `categories.id`; nullable (top-level when NULL)           |
+| `is_active`       | BOOLEAN        | default TRUE                                                |
+| `monthly_budget`  | NUMERIC(12, 2) | nullable; expected monthly outflow (or inflow for income)   |
+| `target_amount`   | NUMERIC(12, 2) | nullable; longer-horizon target (e.g. annual savings goal)  |
+| `created_at`      | DATETIME       | server default `CURRENT_TIMESTAMP`                          |
 
 - Unique constraint `(name, parent_id, type_id)` — siblings must differ.
 - A subcategory must share its parent's `type_id` (enforced by an ORM
   validator on `Category.parent`, not by SQL).
+- `monthly_budget`/`target_amount` are positive Decimal magnitudes; the
+  sign comes from the category's transaction type (expense → outflow).
 - Not seeded — add categories as you need them.
+
+#### `savings_goals` — manually-tracked savings targets
+| column             | type           | notes                                              |
+|--------------------|----------------|----------------------------------------------------|
+| `id`               | INTEGER PK     |                                                    |
+| `name`             | VARCHAR(64) UNIQUE |                                                |
+| `target_amount`    | NUMERIC(12, 2) | positive Decimal                                   |
+| `allocated_amount` | NUMERIC(12, 2) | manually-updated balance; defaults to 0            |
+| `account_id`       | INTEGER FK     | → `accounts.id`, nullable                          |
+| `notes`            | VARCHAR(255)   | nullable                                           |
+| `is_active`        | BOOLEAN        | default TRUE                                       |
+| `created_at`       | DATETIME       | server default `CURRENT_TIMESTAMP`                 |
+
+`allocated_amount` is freeform — the operator updates it from the admin
+UI as they move money. We don't derive it from transactions.
 
 #### `transactions`
 | column        | type           | notes                                          |
@@ -160,22 +181,26 @@ Output shapes:
 - `period="month", group_by=None` → top-level + `{"buckets": [{"period": "2026-06", ...metrics}, ...]}`
 - `period="month", group_by="category"` → buckets, each with `groups: [...]` inside
 
-### Initialize / reset the DB
+### Initialize / migrate the DB
 
 ```bash
-uv run python -m agent.db.database
+uv run python -m agent.db.database   # init_db(): alembic upgrade head + seed
+uv run alembic revision -m "add X"   # author a new migration
+uv run alembic upgrade head          # apply pending migrations manually
+uv run alembic downgrade -1          # roll back one revision
 ```
 
-Idempotent — creates `db/budget.sqlite`, all five tables, and seeds the
-default `transaction_types` and `account_types` rows if missing. To reset
-the schema after a model change, delete `db/budget.sqlite` first.
+`init_db()` is idempotent and runs on every API boot. Migrations live in
+`migrations/versions/`; `alembic.ini` lives at the repo root. To reset
+from scratch, delete `db/budget.sqlite` and run `init_db()`.
 
 ### Public API (`from agent.db import ...`)
 
 - `Base` — declarative base
-- `TransactionType`, `AccountType`, `Account`, `Category`, `Transaction` — ORM models
+- `TransactionType`, `AccountType`, `Account`, `Category`, `Transaction`,
+  `SavingsGoal` — ORM models
 - `engine`, `SessionLocal` — SQLAlchemy engine and session factory
-- `init_db()` — create directory + tables + seed lookups
+- `init_db()` — run Alembic migrations + seed lookups
 - `session_scope()` — context manager that commits on success, rolls back
   on error, and always closes
 - `DATABASE_URL`, `DB_PATH` — for tools/tests that need them
@@ -431,12 +456,24 @@ docker compose up --build  # web on http://localhost:8080
 ### Live updates
 
 `/ws` is an in-process pub/sub broadcasting `transaction.new/updated/deleted`,
-`account.*`, `category.*`, `account_type.*`. API write endpoints publish
-inline; a background poller in `src/api/poller.py` scans new
-`transactions.created_at` rows so MCP/LangGraph writes still reach the
-dashboard. The API marks the poller cutoff after each broadcast to avoid
-duplicate events for API-originated writes. Polling interval is
-`POLL_INTERVAL_SECONDS` (default 3s).
+`account.*`, `category.*`, `account_type.*`, `savings_goal.*`. API write
+endpoints publish inline; a background poller in `src/api/poller.py`
+scans new `transactions.created_at` rows so MCP/LangGraph writes still
+reach the dashboard. The API marks the poller cutoff after each
+broadcast to avoid duplicate events for API-originated writes. Polling
+interval is `POLL_INTERVAL_SECONDS` (default 3s).
+
+### Dashboard data shape
+
+- `GET /summary` — top-level metrics, optional buckets/groups (see above)
+- `GET /summary/categories?date_range=...` — every active category with
+  `id`, `parent_id`, `monthly_budget`, `target_amount`, and `direct_net`
+  (signed sum of the category's *own* transactions in the window, not
+  rolled up). The dashboard builds the parent→child tree client-side and
+  computes rollup totals from `direct_net`. Keying by `id` rather than
+  `name` avoids collisions when two categories share a name across types
+  or under different parents.
+- `GET /savings-goals` — list of savings goals with target + allocated.
 
 ### Dashboard token URL
 

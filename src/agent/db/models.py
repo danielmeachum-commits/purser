@@ -107,6 +107,12 @@ class Category(Base):
         ForeignKey("categories.id"), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    monthly_budget: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    target_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     type: Mapped[TransactionType] = relationship()
@@ -169,4 +175,36 @@ class Transaction(Base):
             f"type_id={self.type_id}, description={self.description!r}, "
             f"category_id={self.category_id}, account_id={self.account_id}, "
             f"is_test={self.is_test})"
+        )
+
+
+class SavingsGoal(Base):
+    """A named savings target with a manually-tracked allocated balance.
+
+    `allocated_amount` is a freeform number the operator updates as they
+    move money toward the goal; it isn't auto-derived from transactions.
+    """
+
+    __tablename__ = "savings_goals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    target_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    allocated_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0"), server_default="0"
+    )
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id"), nullable=True
+    )
+    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    account: Mapped[Account | None] = relationship()
+
+    def __repr__(self) -> str:
+        """Return a debug representation."""
+        return (
+            f"SavingsGoal(id={self.id}, name={self.name!r}, "
+            f"target={self.target_amount}, allocated={self.allocated_amount})"
         )

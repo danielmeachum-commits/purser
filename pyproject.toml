@@ -21,6 +21,7 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pyjwt>=2.9.0",
     "passlib[bcrypt]>=1.7.4",
+    "alembic>=1.13.0",
 ]
 
 [project.scripts]

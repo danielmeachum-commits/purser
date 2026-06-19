@@ -28,6 +28,7 @@ import { SortableHeader } from "@/components/ui/sortable-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { useTableSort } from "@/lib/useTableSort";
+import { formatCurrency } from "@/lib/utils";
 
 interface Category {
   id: number;
@@ -35,6 +36,8 @@ interface Category {
   type: "income" | "expense" | "transfer";
   parent: string | null;
   is_active: boolean;
+  monthly_budget: string | null;
+  target_amount: string | null;
 }
 
 export default function Categories() {
@@ -59,18 +62,19 @@ export default function Categories() {
     });
   }, [catsQ.data]);
 
-  const { sorted: rows, sort, toggle } = useTableSort<Category, "name" | "type" | "parent" | "status">(
-    grouped,
-    {
-      storageKey: "budget.sort.categories",
-      columns: {
-        name: { accessor: (c) => c.name },
-        type: { accessor: (c) => c.type },
-        parent: { accessor: (c) => c.parent },
-        status: { accessor: (c) => (c.is_active ? "active" : "inactive") },
-      },
+  const { sorted: rows, sort, toggle } = useTableSort<
+    Category,
+    "name" | "type" | "parent" | "budget" | "status"
+  >(grouped, {
+    storageKey: "budget.sort.categories",
+    columns: {
+      name: { accessor: (c) => c.name },
+      type: { accessor: (c) => c.type },
+      parent: { accessor: (c) => c.parent },
+      budget: { accessor: (c) => (c.monthly_budget ? Number(c.monthly_budget) : null) },
+      status: { accessor: (c) => (c.is_active ? "active" : "inactive") },
     },
-  );
+  });
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -112,6 +116,9 @@ export default function Categories() {
                 <SortableHeader sortKey="parent" sort={sort} onToggle={toggle}>
                   Parent
                 </SortableHeader>
+                <SortableHeader className="w-32 text-right" sortKey="budget" sort={sort} onToggle={toggle}>
+                  Monthly budget
+                </SortableHeader>
                 <SortableHeader className="w-24" sortKey="status" sort={sort} onToggle={toggle}>
                   Status
                 </SortableHeader>
@@ -127,6 +134,9 @@ export default function Categories() {
                   </TableCell>
                   <TableCell><Badge variant={c.type}>{c.type}</Badge></TableCell>
                   <TableCell className="text-muted-foreground">{c.parent ?? "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">
+                    {c.monthly_budget ? formatCurrency(c.monthly_budget) : "—"}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={c.is_active ? "income" : "outline"}>
                       {c.is_active ? "active" : "inactive"}
@@ -175,6 +185,8 @@ function CategoryForm({
   const [type, setType] = useState<Category["type"]>(category?.type ?? "expense");
   const [parent, setParent] = useState(category?.parent ?? "");
   const [isActive, setIsActive] = useState(category?.is_active ?? true);
+  const [monthlyBudget, setMonthlyBudget] = useState(category?.monthly_budget ?? "");
+  const [targetAmount, setTargetAmount] = useState(category?.target_amount ?? "");
   const [error, setError] = useState<string | null>(null);
 
   const parentOptions = useMemo(
@@ -184,16 +196,24 @@ function CategoryForm({
 
   const save = useMutation({
     mutationFn: async () => {
+      const trimmedBudget = monthlyBudget.trim();
+      const trimmedTarget = targetAmount.trim();
       if (isEdit) {
-        return api(`/categories/${category!.id}`, {
-          method: "PATCH",
-          body: { name, parent: parent || "", is_active: isActive },
-        });
+        const body: Record<string, unknown> = {
+          name,
+          parent: parent || "",
+          is_active: isActive,
+        };
+        if (trimmedBudget === "") body.clear_monthly_budget = true;
+        else body.monthly_budget = trimmedBudget;
+        if (trimmedTarget === "") body.clear_target_amount = true;
+        else body.target_amount = trimmedTarget;
+        return api(`/categories/${category!.id}`, { method: "PATCH", body });
       }
-      return api("/categories", {
-        method: "POST",
-        body: { name, type, parent: parent || null },
-      });
+      const body: Record<string, unknown> = { name, type, parent: parent || null };
+      if (trimmedBudget !== "") body.monthly_budget = trimmedBudget;
+      if (trimmedTarget !== "") body.target_amount = trimmedTarget;
+      return api("/categories", { method: "POST", body });
     },
     onSuccess: onDone,
     onError: (e: unknown) => setError(e instanceof Error ? e.message : "failed"),
@@ -240,6 +260,24 @@ function CategoryForm({
               {parentOptions.map((p) => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
             </SelectContent>
           </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Monthly budget (optional)</Label>
+          <Input
+            value={monthlyBudget}
+            onChange={(e) => setMonthlyBudget(e.target.value)}
+            placeholder="e.g. 500"
+            inputMode="decimal"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label>Target amount (optional)</Label>
+          <Input
+            value={targetAmount}
+            onChange={(e) => setTargetAmount(e.target.value)}
+            placeholder="e.g. 5000"
+            inputMode="decimal"
+          />
         </div>
         {isEdit && (
           <div className="col-span-2 flex items-center gap-2 pt-1">
