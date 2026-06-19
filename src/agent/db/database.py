@@ -37,7 +37,17 @@ engine = create_engine(DATABASE_URL, echo=False, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
-_ALEMBIC_INI = REPO_ROOT / "alembic.ini"
+def _find_alembic_ini() -> Path:
+    # REPO_ROOT works for editable installs (dev). For non-editable (docker),
+    # the package lives in site-packages and REPO_ROOT points there; the
+    # Dockerfile drops alembic.ini + migrations/ at /app instead.
+    for candidate in (REPO_ROOT / "alembic.ini", Path("/app/alembic.ini")):
+        if candidate.exists():
+            return candidate
+    return REPO_ROOT / "alembic.ini"
+
+
+_ALEMBIC_INI = _find_alembic_ini()
 
 
 def init_db() -> None:
