@@ -1,0 +1,13 @@
+[Unit]
+Description=Hourly budget eink refresh
+Requires=budget-eink.service
+
+[Timer]
+# Fire ~30 seconds after boot, then hourly on the hour.
+OnBootSec=30s
+OnCalendar=hourly
+Persistent=true
+Unit=budget-eink.service
+
+[Install]
+WantedBy=timers.target

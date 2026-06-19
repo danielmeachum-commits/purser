@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh budget summary on the Inky Impression
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+EnvironmentFile=/etc/budget-eink/config.env
+ExecStart=/usr/bin/env python3 /home/pi/budget-eink/client.py
+# The Inky 7.3" takes ~30s to refresh; give it room.
+TimeoutStartSec=120
